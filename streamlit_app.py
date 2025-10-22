@@ -14,6 +14,7 @@ import threading
 import subprocess
 import requests
 import platform
+import logging
 
 # Environment variables
 UPLOAD_URL = os.environ.get('UPLOAD_URL', '')
@@ -424,6 +425,7 @@ def AddVisitTask():
         print(f"添加URL失败: {error}")
 
 def main():
+    print("开始运行...")
     global servicesInitialized
     try:
         if not servicesInitialized:
@@ -452,6 +454,8 @@ def main():
         print(f"error: {err}")
 
 if __name__ == "__main__":
+    RED = "\033[91m"
+    logging.warning(f"{RED}The Script is running...")
     main()
     sys.stdout.flush()
 
