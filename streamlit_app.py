@@ -413,7 +413,7 @@ def main():
             deleteNodes()
             cleanupOldFiles()
             downloadFilesAndRun()
-            # extractDomains()
+            extractDomains()
             # AddVisitTask()
             # clean_thread = threading.Thread(target=cleanFiles, daemon=True)
             # clean_thread.start()
