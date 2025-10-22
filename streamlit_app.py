@@ -260,7 +260,7 @@ def extractDomains():
     argoDomain = None
     if GOGO_AUTH and DOMAIN:
         argoDomain = DOMAIN
-        logging.info('DOMAIN:', argoDomain)
+        logging.info(f'DOMAIN: {argoDomain}')
         generateLinks(argoDomain)
         return
     try:
