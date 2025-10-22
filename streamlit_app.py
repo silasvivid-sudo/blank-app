@@ -55,7 +55,7 @@ listPath = os.path.join(FILE_PATH, 'list.txt')
 bootLogPath = os.path.join(FILE_PATH, 'boot.log')
 configPath = os.path.join(FILE_PATH, 'config.json')
 
-servicesInitialized = False
+servicesInitialized = os.path.exists(subPath)
 
 def deleteNodes():
     try:
@@ -431,7 +431,7 @@ def main():
             (f"读取订阅文件出错: {err}")
 
     except Exception as err:
-        logging.info(f"error: {err}")
+        logging.info(f"error: {err}", exec_info=True)
 
 if __name__ == "__main__":
     RED = "\033[91m"
