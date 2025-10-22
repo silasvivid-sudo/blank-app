@@ -250,8 +250,6 @@ def argoType():
     else:
         logging.info("GOGO_AUTH mismatch TunnelSecret,use token connect to tunnel")
 
-argoType()
-
 def extractDomains():
     argoDomain = None
     if GOGO_AUTH and DOMAIN:
@@ -405,6 +403,7 @@ def main():
     global servicesInitialized
     try:
         if not servicesInitialized:
+            argoType()
             logging.info('初始化服务...')
             deleteNodes()
             cleanupOldFiles()
