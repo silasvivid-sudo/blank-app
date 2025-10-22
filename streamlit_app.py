@@ -1,16 +1,12 @@
-import streamlit as st
-
-st.title("🎈 My new app")
-
 #!/usr/bin/env python3
 
+import streamlit as st
 import os
 import sys
 import json
 import base64
 import time
 import re
-import threading
 import subprocess
 import requests
 import platform
@@ -27,7 +23,7 @@ logging.basicConfig(
 
 # Environment variables
 UPLOAD_URL = os.environ.get('UPLOAD_URL', '')
-PROJECT_URL = os.environ.get('PROJECT_URL', '')
+PROJECT_URL = os.environ.get('PROJECT_URL', 'https://blank-app-2pgjkfzgsf8drhkjmdsz6e.streamlit.app/')
 AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'false').lower() == 'true'
 FILE_PATH = os.environ.get('FILE_PATH', './.npm')
 SUB_PATH = os.environ.get('SUB_PATH', 'sub')
@@ -414,7 +410,7 @@ def main():
             cleanupOldFiles()
             downloadFilesAndRun()
             extractDomains()
-            # AddVisitTask()
+            AddVisitTask()
             # clean_thread = threading.Thread(target=cleanFiles, daemon=True)
             # clean_thread.start()
             servicesInitialized = True
@@ -434,10 +430,5 @@ def main():
         logging.info(f"error: {err}", exec_info=True)
 
 if __name__ == "__main__":
-    RED = "\033[91m"
-    print(f"{RED}The Script is running...")
     main()
     sys.stdout.flush()
-
-
-
