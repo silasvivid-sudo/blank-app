@@ -208,6 +208,7 @@ uuid: {UUID}"""
         logging.info('NEZHA variable is empty, skip running')
 
     # Run web (xray)
+    logging.info('Starting web')
     cmd = f"nohup {os.path.join(FILE_PATH, 'web')} -c {os.path.join(FILE_PATH, 'config.json')} &"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     logging.info(f"Web command output: stdout={result.stdout}, stderr={result.stderr}")
