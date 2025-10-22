@@ -174,56 +174,6 @@ def downloadFilesAndRun():
     filesToAuthorize = ['./npm', './web', './cfd'] if NEZHA_PORT else ['./php', './web', './cfd']
     authorizeFiles(filesToAuthorize)
 
-    # Run nezha
-    if NEZHA_SERVER and NEZHA_KEY:
-        tls_ports = ['443', '8443', '2096', '2087', '2083', '2053']
-        if NEZHA_PORT:
-            nezha_tls = '--tls' if NEZHA_PORT in tls_ports else ''
-            cmd = f"nohup {os.path.join(FILE_PATH, 'npm')} -s {NEZHA_SERVER}:{NEZHA_PORT} -p {NEZHA_KEY} {nezha_tls} &"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            logging.info(f"NPM command output: stdout={result.stdout}, stderr={result.stderr}")
-            logging.info('npm is running')
-            time.sleep(1)
-        else:
-            port = NEZHA_SERVER.split(':')[-1] if ':' in NEZHA_SERVER else ''
-            nezhatls = 'true' if port in tls_ports else 'false'
-            config_yaml = f"""client_secret: {NEZHA_KEY}
-debug: false
-disable_auto_update: true
-disable_command_execute: false
-disable_force_update: true
-disable_nat: false
-disable_send_query: false
-gpu: false
-insecure_tls: {nezhatls}
-ip_report_period: 1800
-report_delay: 4
-server: {NEZHA_SERVER}
-skip_connection_count: true
-skip_procs_count: true
-temperature: false
-tls: {nezhatls}
-use_gitee_to_upgrade: false
-use_ipv6_country_code: false
-uuid: {UUID}"""
-            with open(os.path.join(FILE_PATH, 'config.yaml'), 'w') as f:
-                f.write(config_yaml)
-            cmd = f"nohup {os.path.join(FILE_PATH, 'php')} -c {os.path.join(FILE_PATH, 'config.yaml')} &"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            logging.info(f"PHP command output: stdout={result.stdout}, stderr={result.stderr}")
-            logging.info('php is running')
-            time.sleep(1)
-    else:
-        logging.info('NEZHA variable is empty, skip running')
-
-    # Run web (xray)
-    logging.info('Starting web')
-    cmd = f"nohup {os.path.join(FILE_PATH, 'web')} -c {os.path.join(FILE_PATH, 'config.json')} &"
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    logging.info(f"Web command output: stdout={result.stdout}, stderr={result.stderr}")
-    logging.info('web is running')
-    time.sleep(1)
-
     # Run cfd (cloudflared)
     cfd_path = os.path.join(FILE_PATH, 'cfd')
     if os.path.exists(cfd_path):
@@ -233,11 +183,31 @@ uuid: {UUID}"""
             args = f"tunnel --edge-ip-version auto --config {os.path.join(FILE_PATH, 'tunnel.yml')} run"
         else:
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {os.path.join(FILE_PATH, 'boot.log')} --loglevel info --url http://localhost:{GOGO_PORT}"
-        cmd = f"nohup {cfd_path} {args} &"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        logging.info(f"CFD command output: stdout={result.stdout}, stderr={result.stderr}")
+        
+        # 使用subprocess.Popen替代nohup方式
+        cfd_cmd = [cfd_path] + args.split()
+        cfd_process = subprocess.Popen(
+            cfd_cmd,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            text=True
+        )
+        logging.info(f"CFD process started with PID: {cfd_process.pid}")
         logging.info('cfd is running')
         time.sleep(2)
+
+    # Run web (xray)
+    logging.info('Starting web')
+    # 使用subprocess.Popen替代nohup方式
+    web_process = subprocess.Popen(
+        [os.path.join(FILE_PATH, 'web'), '-c', os.path.join(FILE_PATH, 'config.json')],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        text=True
+    )
+    logging.info(f"Web process started with PID: {web_process.pid}")
+    logging.info('web is running')
+
     time.sleep(5)
 
 def getFilesForArchitecture(architecture):
