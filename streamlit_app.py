@@ -24,7 +24,7 @@ logging.basicConfig(
 # Environment variables
 UPLOAD_URL = os.environ.get('UPLOAD_URL', '')
 PROJECT_URL = os.environ.get('PROJECT_URL', 'https://blank-app-2pgjkfzgsf8drhkjmdsz6e.streamlit.app/')
-AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'false').lower() == 'true'
+AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'true').lower() == 'true'
 FILE_PATH = os.environ.get('FILE_PATH', './.npm')
 SUB_PATH = os.environ.get('SUB_PATH', 'sub')
 UUID = os.environ.get('UUID', '28713155-6f6d-4a2d-a6cd-5d9d9f28a36e')
