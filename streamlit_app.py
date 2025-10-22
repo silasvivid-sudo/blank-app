@@ -36,7 +36,7 @@ GOGO_AUTH = os.environ.get('GOGO_AUTH', 'eyJhIjoiMmM0NzlmNzVkYzU2ZTlhZTA0ZjI1MWR
 GOGO_PORT = int(os.environ.get('GOGO_PORT', 8001))
 CFIP = os.environ.get('CFIP', 'cf.090227.xyz')
 CFPORT = int(os.environ.get('CFPORT', 443))
-NAME = os.environ.get('NAME', 'Appwrite')
+NAME = os.environ.get('NAME', 'Streamlit')
 
 # Paths
 os.makedirs(FILE_PATH, exist_ok=True)
