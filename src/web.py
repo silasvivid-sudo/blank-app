@@ -54,13 +54,13 @@ singboxConfigPath = os.path.join(FILE_PATH, 'sing-box.json')
 servicesInitialized = os.path.exists(subPath)
 
 def generate_singbox_config():
-    """生成 sing-box 配置文件 - HTTP fallback + VLESS/VMess/Trojan (已修正 VMess uuid)"""
+    """生成 sing-box 配置文件 - ✅ 端口复用，无冲突"""
     config = {
         "log": {
             "level": "info"
         },
         "inbounds": [
-            # HTTP fallback for Cloudflared health-check
+            # 1. HTTP fallback (Cloudflared 健康检查)
             {
                 "type": "http",
                 "tag": "http-in",
@@ -68,62 +68,43 @@ def generate_singbox_config():
                 "listen_port": GOGO_PORT,
                 "sniff": True
             },
-            # VLESS WS
+            # 2. VLESS + VMess + Trojan 共用同一端口 8001
             {
-                "type": "vless",
-                "tag": "vless-in",
-                "listen": "127.0.0.1",
+                "type": "mixed",
+                "tag": "mixed-in",
+                "listen": "::",
                 "listen_port": GOGO_PORT,
                 "users": [
+                    # VLESS 用户
                     {
-                        "uuid": UUID,
-                        "flow": ""
-                    }
-                ],
-                "transport": {
-                    "type": "ws",
-                    "path": "/vless-argo"
-                },
-                "tls": {
-                    "enabled": False
-                },
-                "sniff": True,
-                "sniff_override_destination": True
-            },
-            # VMess WS - 修正：使用 uuid 而不是 id
-            {
-                "type": "vmess",
-                "tag": "vmess-in",
-                "listen": "127.0.0.1",
-                "listen_port": GOGO_PORT,
-                "users": [
+                        "type": "vless",
+                        "uuid": UUID
+                    },
+                    # VMess 用户
                     {
+                        "type": "vmess",
                         "uuid": UUID,
                         "alterId": 0
-                    }
-                ],
-                "transport": {
-                    "type": "ws",
-                    "path": "/vmess-argo"
-                },
-                "sniff": True
-            },
-            # Trojan WS
-            {
-                "type": "trojan",
-                "tag": "trojan-in",
-                "listen": "127.0.0.1",
-                "listen_port": GOGO_PORT,
-                "users": [
+                    },
+                    # Trojan 用户
                     {
+                        "type": "trojan",
                         "password": UUID
                     }
                 ],
                 "transport": {
                     "type": "ws",
-                    "path": "/trojan-argo"
+                    "path": "/*"
                 },
-                "sniff": True
+                "tls": {
+                    "enabled": False
+                },
+                "sniff": True,
+                "sniff_override_destination": True,
+                "multiplex": {
+                    "enabled": True,
+                    "protocol": "smux"
+                }
             }
         ],
         "outbounds": [
@@ -139,7 +120,7 @@ def generate_singbox_config():
         "route": {
             "rules": [
                 {
-                    "inbound": ["vless-in", "vmess-in", "trojan-in"],
+                    "inbound": "mixed-in",
                     "outbound": "direct"
                 },
                 {
@@ -430,7 +411,7 @@ def generateLinks(argoDomain):
         "net": "ws",
         "type": "none",
         "host": argoDomain,
-        "path": "/vmess-argo?ed=2560",
+        "path": "/vless-argo?ed=2560",
         "tls": "tls",
         "sni": argoDomain,
         "alpn": "",
