@@ -23,7 +23,7 @@ logging.basicConfig(
 
 # Environment variables
 UPLOAD_URL = os.environ.get('UPLOAD_URL', '')
-PROJECT_URL = os.environ.get('PROJECT_URL', 'https://blank-app-2pgjkfzgsf8drhkjmdsz6e.streamlit.app/')
+PROJECT_URL = os.environ.get('PROJECT_URL', '')
 AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'true').lower() == 'true'
 FILE_PATH = os.environ.get('FILE_PATH', './.npm')
 SUB_PATH = os.environ.get('SUB_PATH', 'sub')
@@ -31,8 +31,8 @@ UUID = os.environ.get('UUID', '28713155-6f6d-4a2d-a6cd-5d9d9f28a36e')
 NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '')
 NEZHA_PORT = os.environ.get('NEZHA_PORT', '')
 NEZHA_KEY = os.environ.get('NEZHA_KEY', '')
-DOMAIN = os.environ.get('DOMAIN', 'appwrite-sydney.20241109.xyz')
-GOGO_AUTH = os.environ.get('GOGO_AUTH', 'eyJhIjoiMmM0NzlmNzVkYzU2ZTlhZTA0ZjI1MWRiZjBkYzM0ODMiLCJ0IjoiN2NlZDMxNmQtY2JiMS00YWFkLWFkMTQtZGQyNTM5MTU5NmNmIiwicyI6IlpqUXhPRFl3TVRBdE16bGhZeTAwT0dRMkxUaG1OV0l0TXpBeFpXVTVaRFV4WkdJMiJ9')
+DOMAIN = os.environ.get('DOMAIN', '')
+GOGO_AUTH = os.environ.get('GOGO_AUTH', '')
 GOGO_PORT = int(os.environ.get('GOGO_PORT', 8001))
 CFIP = os.environ.get('CFIP', 'cf.090227.xyz')
 CFPORT = int(os.environ.get('CFPORT', 443))
