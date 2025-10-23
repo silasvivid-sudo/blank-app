@@ -94,7 +94,7 @@ config = {
                 }
             ],
             "tls": {
-                "enabled": false
+                "enabled": False
             }
         },
         {
