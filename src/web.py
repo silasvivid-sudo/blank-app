@@ -69,7 +69,7 @@ def cleanupOldFiles():
         if os.path.exists(filePath):
             os.unlink(filePath)
             logging.info(f"Cleaned up {filePath}")
-# Generate sb config - ✅ 日志级别 info
+# Generate sb config - ✅ 修复 VMess alter_id
 config = {
     "log": {
         "level": "info"
@@ -120,8 +120,7 @@ config = {
             "listen_port": 3003,
             "users": [
                 {
-                    "uuid": UUID,
-                    "alter_id": 0
+                    "uuid": UUID  # ✅ 修复：移除 alter_id
                 }
             ],
             "transport": {
@@ -230,10 +229,10 @@ def downloadFilesAndRun():
         logging.info(f"CFD process started with PID: {cfd_process.pid}")
         logging.info('cfd is running')
         time.sleep(2)
-    # Run sb - ✅ 修复：正确启动命令
+    # Run sb
     logging.info('Starting sb')
     sb_process = subprocess.Popen(
-        [os.path.join(FILE_PATH, 'sb'), 'run', '-c', os.path.join(FILE_PATH, 'config.json')],  # ✅ 正确！
+        [os.path.join(FILE_PATH, 'sb'), 'run', '-c', os.path.join(FILE_PATH, 'config.json')],
         stdout=sys.stdout,
         stderr=sys.stderr,
         text=True
@@ -381,73 +380,4 @@ def uplodNodes():
                 logging.info('Subscription uploaded successfully')
         except Exception as error:
             logging.info(f"Upload error: {error}")
-            if hasattr(error, 'response') and error.response and error.response.status_code == 400:
-                logging.info("Subscription already exists")
-    elif UPLOAD_URL:
-        if not os.path.exists(listPath):
-            return
-        with open(listPath, 'r', encoding='utf-8') as f:
-            content = f.read()
-        nodes = [line for line in content.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
-        if not nodes:
-            return
-        try:
-            resp = requests.post(f"{UPLOAD_URL}/api/add-nodes", json={"nodes": nodes})
-            logging.info(f"Upload nodes response: {resp.status_code} - {resp.text}")
-            if resp.status_code == 200:
-                logging.info('Nodes uploaded successfully')
-        except Exception as error:
-            logging.info(f"Upload nodes error: {error}")
-    else:
-        logging.info('Skipping upload nodes')
-def cleanFiles():
-    time.sleep(90)
-    filesToDelete = [bootLogPath, configPath, sbPath, webPath, phpPath, npmPath]
-    if NEZHA_PORT:
-        filesToDelete.append(npmPath)
-    elif NEZHA_SERVER and NEZHA_KEY:
-        filesToDelete.append(phpPath)
-    cmd = f"rm -rf {' '.join(filesToDelete)}"
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    logging.info(f"Clean files output: stdout={result.stdout}, stderr={result.stderr}")
-    os.system('clear')
-    logging.info('App is running')
-    logging.info('Thank you for using this script, enjoy!')
-def AddVisitTask():
-    if not AUTO_ACCESS or not PROJECT_URL:
-        logging.info("Skipping adding automatic access task")
-        return
-    try:
-        resp = requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL})
-        logging.info(f"Add visit task response: {resp.status_code} - {resp.text}")
-        logging.info("automatic access task added successfully")
-    except Exception as error:
-        logging.info(f"添加URL失败: {error}")
-def main():
-    logging.info("开始运行...")
-    global servicesInitialized
-    try:
-        if not servicesInitialized:
-            argoType()
-            logging.info('初始化服务...')
-            deleteNodes()
-            cleanupOldFiles()
-            downloadFilesAndRun()
-            extractDomains()
-            AddVisitTask()
-            servicesInitialized = True
-        try:
-            logging.info("读取订阅文件:")
-            if os.path.exists(subPath):
-                with open(subPath, 'r', encoding='utf-8') as f:
-                    subContent = f.read()
-                    st.write(subContent)
-            else:
-                st.write("订阅文件不存在")
-        except Exception as err:
-            logging.error(f"读取订阅文件出错: {err}")
-    except Exception as err:
-        logging.error(f"error: {err}", exc_info=True)
-if __name__ == "__main__":
-    main()
-    sys.stdout.flush()
+            if hasattr(error, 'response') and
