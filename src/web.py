@@ -340,7 +340,7 @@ def extractDomains():
                 argoDomains.append(match.group(1))
         if argoDomains:
             argoDomain = argoDomains[0]
-            logging.info('ArgoDomain:', argoDomain)
+            logging.info(f'ArgoDomain: {argoDomain}')
             generateLinks(argoDomain)
         else:
             logging.info('ArgoDomain not found, re-running cloudflared to obtain ArgoDomain')
