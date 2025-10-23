@@ -45,7 +45,7 @@ logging.info(f"{FILE_PATH} is created" if not os.path.exists(FILE_PATH) else f"{
 
 phpPath = os.path.join(FILE_PATH, 'php')
 singboxPath = os.path.join(FILE_PATH, 'sing-box')
-botPath = os.path.join(FILE_PATH, 'cfd')
+cloudflaredPath = os.path.join(FILE_PATH, 'cloudflared')
 subPath = os.path.join(FILE_PATH, 'sub.txt')
 listPath = os.path.join(FILE_PATH, 'list.txt')
 bootLogPath = os.path.join(FILE_PATH, 'boot.log')
@@ -57,7 +57,7 @@ def generate_singbox_config():
     """生成 sing-box 配置文件"""
     config = {
         "log": {
-            "level": "INFO"
+            "level": "info"  # ✅ 修正：silent → info
         },
         "inbounds": [
             {
@@ -121,7 +121,16 @@ def deleteNodes():
         logging.info(f"Error in deleteNodes: {e}")
 
 def cleanupOldFiles():
-    pathsToDelete = ['sing-box', 'cfd', 'php', 'sub.txt', 'boot.log', 'sing-box.json', 'tunnel.yml', 'tunnel.json']
+    pathsToDelete = [
+        'sing-box', 
+        'cloudflared', 
+        'php', 
+        'sub.txt', 
+        'boot.log', 
+        'sing-box.json', 
+        'tunnel.yml', 
+        'tunnel.json'
+    ]
     for file in pathsToDelete:
         filePath = os.path.join(FILE_PATH, file)
         if os.path.exists(filePath):
@@ -136,7 +145,7 @@ def getSystemArchitecture():
 
 def downloadAndExtractSingbox(architecture):
     """下载并解压 sing-box"""
-    version = "1.12.11"  # 指定版本，可改为动态获取
+    version = "1.12.11"
     tarball_name = f"sing-box-{version}-linux-{architecture}.tar.gz"
     tarball_url = f"https://github.com/SagerNet/sing-box/releases/download/v{version}/{tarball_name}"
     tarball_path = os.path.join(FILE_PATH, tarball_name)
@@ -145,7 +154,6 @@ def downloadAndExtractSingbox(architecture):
     try:
         logging.info(f"Downloading sing-box {version} for {architecture}...")
         
-        # 下载 tar.gz
         resp = requests.get(tarball_url, stream=True)
         resp.raise_for_status()
         
@@ -154,15 +162,12 @@ def downloadAndExtractSingbox(architecture):
                 f.write(chunk)
         logging.info(f"Downloaded {tarball_name}")
         
-        # 创建临时解压目录
         os.makedirs(extract_dir, exist_ok=True)
         
-        # 解压
         with tarfile.open(tarball_path, 'r:gz') as tar:
             tar.extractall(extract_dir)
         logging.info(f"Extracted to {extract_dir}")
         
-        # 找到 sing-box 可执行文件并移动到目标位置
         for root, dirs, files in os.walk(extract_dir):
             if 'sing-box' in files:
                 source_path = os.path.join(root, 'sing-box')
@@ -171,7 +176,6 @@ def downloadAndExtractSingbox(architecture):
                 logging.info(f"Moved sing-box to {singboxPath} and set permissions")
                 break
         
-        # 清理临时文件
         shutil.rmtree(extract_dir)
         os.unlink(tarball_path)
         logging.info("Cleaned up temporary files")
@@ -180,44 +184,74 @@ def downloadAndExtractSingbox(architecture):
         
     except Exception as e:
         logging.error(f"Error downloading/extracting sing-box: {e}")
-        # 清理失败的文件
         if os.path.exists(extract_dir):
             shutil.rmtree(extract_dir)
         if os.path.exists(tarball_path):
             os.unlink(tarball_path)
         return False
 
+def downloadCloudflared(architecture):
+    """下载官方 cloudflared 可执行文件"""
+    version = "2025.10.0"
+    filename = f"cloudflared-linux-{architecture}"
+    url = f"https://github.com/cloudflare/cloudflared/releases/download/{version}/{filename}"
+    
+    try:
+        logging.info(f"Downloading cloudflared {version} for {architecture}...")
+        resp = requests.get(url, stream=True)
+        resp.raise_for_status()
+        
+        with open(cloudflaredPath, 'wb') as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
+        logging.info(f"Downloaded {filename}")
+        
+        # 设置执行权限
+        os.chmod(cloudflaredPath, 0o775)
+        logging.info(f"Set permissions for {cloudflaredPath}: 775")
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error downloading cloudflared: {e}")
+        if os.path.exists(cloudflaredPath):
+            os.unlink(cloudflaredPath)
+        return False
+
 def downloadFile(fileName, fileUrl):
-    """下载单个文件（用于 cfd, php, npm）"""
+    """下载单个文件（用于 php, npm）"""
     file_path = os.path.join(FILE_PATH, fileName)
     resp = requests.get(fileUrl, stream=True)
     resp.raise_for_status()
     with open(file_path, 'wb') as f:
         for chunk in resp.iter_content(chunk_size=8192):
             f.write(chunk)
+    os.chmod(file_path, 0o775)  # 设置权限
     logging.info(f"Download {fileName} successfully")
     return fileName
 
 def downloadFilesAndRun():
     architecture = getSystemArchitecture()
     
-    # 下载并解压 sing-box
+    # 1. 下载并解压 sing-box
     if not downloadAndExtractSingbox(architecture):
         logging.error("Failed to download sing-box, aborting")
         return
     
-    # 下载其他文件
-    otherFiles = [
-        {"fileName": "cfd", "fileUrl": "https://arm64.ssss.nyc.mn/2go" if architecture == 'arm64' else "https://amd64.ssss.nyc.mn/2go"}
-    ]
+    # 2. 下载 cloudflared
+    if not downloadCloudflared(architecture):
+        logging.error("Failed to download cloudflared, aborting")
+        return
     
+    # 3. 下载其他文件 (php/npm)
+    otherFiles = []
     if NEZHA_SERVER and NEZHA_KEY:
         if NEZHA_PORT:
             npmUrl = "https://arm64.ssss.nyc.mn/agent" if architecture == 'arm64' else "https://amd64.ssss.nyc.mn/agent"
-            otherFiles.insert(0, {"fileName": "npm", "fileUrl": npmUrl})
+            otherFiles.append({"fileName": "npm", "fileUrl": npmUrl})
         else:
             phpUrl = "https://arm64.ssss.nyc.mn/v1" if architecture == 'arm64' else "https://amd64.ssss.nyc.mn/v1"
-            otherFiles.insert(0, {"fileName": "php", "fileUrl": phpUrl})
+            otherFiles.append({"fileName": "php", "fileUrl": phpUrl})
     
     for fileInfo in otherFiles:
         try:
@@ -226,29 +260,14 @@ def downloadFilesAndRun():
             logging.info(f"Error downloading {fileInfo['fileName']}: {e}")
             return
     
-    # Generate sing-box config
+    # 4. 生成 sing-box 配置
     config = generate_singbox_config()
     with open(singboxConfigPath, 'w') as f:
         json.dump(config, f, indent=2)
     logging.info("Sing-box config generated")
     
-    # Authorize files
-    def authorizeFiles(filePaths):
-        for relativeFilePath in filePaths:
-            absoluteFilePath = os.path.join(FILE_PATH, relativeFilePath)
-            if os.path.exists(absoluteFilePath):
-                os.chmod(absoluteFilePath, 0o775)
-                logging.info(f"Empowerment success for {absoluteFilePath}: 775")
-    
-    filesToAuthorize = ['./sing-box', './cfd']
-    if NEZHA_SERVER and NEZHA_KEY:
-        filesToAuthorize.append('./npm' if NEZHA_PORT else './php')
-    
-    authorizeFiles(filesToAuthorize)
-    
-    # Run cfd (cloudflared)
-    cfd_path = os.path.join(FILE_PATH, 'cfd')
-    if os.path.exists(cfd_path):
+    # 5. 运行 cloudflared
+    if os.path.exists(cloudflaredPath):
         if re.match(r'^[A-Z0-9a-z=]{120,250}$', GOGO_AUTH):
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token {GOGO_AUTH}"
         elif 'TunnelSecret' in GOGO_AUTH:
@@ -256,18 +275,18 @@ def downloadFilesAndRun():
         else:
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {os.path.join(FILE_PATH, 'boot.log')} --loglevel info --url http://localhost:{GOGO_PORT}"
        
-        cfd_cmd = [cfd_path] + args.split()
-        cfd_process = subprocess.Popen(
-            cfd_cmd,
+        cloudflared_cmd = [cloudflaredPath] + args.split()
+        cloudflared_process = subprocess.Popen(
+            cloudflared_cmd,
             stdout=sys.stdout,
             stderr=sys.stderr,
             text=True
         )
-        logging.info(f"CFD process started with PID: {cfd_process.pid}")
-        logging.info('cfd is running')
+        logging.info(f"Cloudflared process started with PID: {cloudflared_process.pid}")
+        logging.info('cloudflared is running')
         time.sleep(2)
     
-    # Run sing-box
+    # 6. 运行 sing-box
     logging.info('Starting sing-box')
     singbox_process = subprocess.Popen(
         [singboxPath, 'run', '-c', singboxConfigPath],
@@ -324,19 +343,19 @@ def extractDomains():
             logging.info('ArgoDomain:', argoDomain)
             generateLinks(argoDomain)
         else:
-            logging.info('ArgoDomain not found, re-running cfd to obtain ArgoDomain')
+            logging.info('ArgoDomain not found, re-running cloudflared to obtain ArgoDomain')
             boot_log = os.path.join(FILE_PATH, 'boot.log')
             if os.path.exists(boot_log):
                 os.unlink(boot_log)
-            cmd_kill = 'pkill -f "[b]ot" > /dev/null 2>&1'
+            cmd_kill = 'pkill -f "cloudflared" > /dev/null 2>&1'
             result_kill = subprocess.run(cmd_kill, shell=True, capture_output=True, text=True)
             logging.info(f"Pkill output: stdout={result_kill.stdout}, stderr={result_kill.stderr}")
             time.sleep(3)
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {boot_log} --loglevel info --url http://localhost:{GOGO_PORT}"
-            cmd = f"nohup {os.path.join(FILE_PATH, 'cfd')} {args} &"
+            cmd = f"nohup {cloudflaredPath} {args} &"
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            logging.info(f"Re-run CFD command output: stdout={result.stdout}, stderr={result.stderr}")
-            logging.info('cfd is running.')
+            logging.info(f"Re-run cloudflared command output: stdout={result.stdout}, stderr={result.stderr}")
+            logging.info('cloudflared is running.')
             time.sleep(3)
             extractDomains() # Recurse
     except Exception as error:
@@ -409,7 +428,7 @@ def cleanFiles():
         bootLogPath, 
         singboxConfigPath,
         singboxPath,
-        botPath, 
+        cloudflaredPath,
         phpPath
     ]
     if NEZHA_PORT:
@@ -427,18 +446,23 @@ def cleanFiles():
     cmd = f"rm -rf {' '.join(filesToDelete)}"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     logging.info(f"Clean files output: stdout={result.stdout}, stderr={result.stderr}")
+    os.system('clear')
+    logging.info('App is running')
+    logging.info('Thank you for using this script, enjoy!')
 
 def AddVisitTask():
     if not AUTO_ACCESS or not PROJECT_URL:
+        logging.info("Skipping adding automatic access task")
         return
     try:
         resp = requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL})
-        logging.info(f"Add visit task response: {resp.status_code}")
+        logging.info(f"Add visit task response: {resp.status_code} - {resp.text}")
+        logging.info("automatic access task added successfully")
     except Exception as error:
         logging.info(f"添加URL失败: {error}")
 
 def main():
-    logging.info("开始运行 Sing-box 部署...")
+    logging.info("开始运行 Sing-box + Cloudflared 部署...")
     global servicesInitialized
     try:
         if not servicesInitialized:
