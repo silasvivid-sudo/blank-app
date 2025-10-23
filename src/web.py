@@ -80,7 +80,7 @@ def cleanupOldFiles():
 
 # Generate xray config
 config = {
-    "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "info"},
+    "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
     "inbounds": [
         {
             "port": GOGO_PORT,
