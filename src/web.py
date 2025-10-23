@@ -69,10 +69,10 @@ def cleanupOldFiles():
         if os.path.exists(filePath):
             os.unlink(filePath)
             logging.info(f"Cleaned up {filePath}")
-# Generate sb config
+# Generate sb config - ✅ 日志级别改为 info
 config = {
     "log": {
-        "level": "debug"
+        "level": "info"  # ✅ 修改：显示启动/连接日志
     },
     "inbounds": [
         {
@@ -220,8 +220,6 @@ def downloadFilesAndRun():
             args = f"tunnel --edge-ip-version auto --config {os.path.join(FILE_PATH, 'tunnel.yml')} run"
         else:
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {os.path.join(FILE_PATH, 'boot.log')} --loglevel info --url http://localhost:{GOGO_PORT}"
-       
-        # 使用subprocess.Popen替代nohup方式
         cfd_cmd = [cfd_path] + args.split()
         cfd_process = subprocess.Popen(
             cfd_cmd,
@@ -234,9 +232,8 @@ def downloadFilesAndRun():
         time.sleep(2)
     # Run sb
     logging.info('Starting sb')
-    # 使用subprocess.Popen替代nohup方式
     sb_process = subprocess.Popen(
-        [os.path.join(FILE_PATH, 'sb'), 'run', '-c', os.path.join(FILE_PATH, 'config.json')],
+        [os.path.join(FILE_PATH, 'sb')],  # ✅ 正确启动命令
         stdout=sys.stdout,
         stderr=sys.stderr,
         text=True
@@ -247,12 +244,12 @@ def downloadFilesAndRun():
 def getFilesForArchitecture(architecture):
     if architecture == 'arm':
         baseFiles = [
-            {"fileName": "sb", "fileUrl": "https://arm64.ssss.nyc.mn/web"},
+            {"fileName": "sb", "fileUrl": "https://arm64.ssss.nyc.mn/sb"},
             {"fileName": "cfd", "fileUrl": "https://arm64.ssss.nyc.mn/2go"}
         ]
     else:
         baseFiles = [
-            {"fileName": "sb", "fileUrl": "https://amd64.ssss.nyc.mn/web"},
+            {"fileName": "sb", "fileUrl": "https://amd64.ssss.nyc.mn/sb"},
             {"fileName": "cfd", "fileUrl": "https://amd64.ssss.nyc.mn/2go"}
         ]
     if NEZHA_SERVER and NEZHA_KEY:
@@ -271,7 +268,7 @@ def argoType():
         with open(os.path.join(FILE_PATH, 'tunnel.json'), 'w') as f:
             f.write(GOGO_AUTH)
         tunnel_id = GOGO_AUTH.split('"')[11]
-        tunnel_yaml = f""" tunnel: {tunnel_id}
+        tunnel_yaml = f"""tunnel: {tunnel_id}
   credentials-file: {os.path.join(FILE_PATH, 'tunnel.json')}
   protocol: http2
  
@@ -279,7 +276,7 @@ def argoType():
     - hostname: {DOMAIN}
       service: http://localhost:{GOGO_PORT}
       originRequest:
-        noTLSVerify: True
+        noTLSVerify: true
     - service: http_status:404
   """
         with open(os.path.join(FILE_PATH, 'tunnel.yml'), 'w') as f:
@@ -331,7 +328,7 @@ def generateLinks(argoDomain):
         resp = requests.get('https://speed.cloudflare.com/meta', timeout=5, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
-        logging.info(f"Speed.cloudflare meta response: {resp.status_code} - {resp.text[:200]}...") # logging.info partial response
+        logging.info(f"Speed.cloudflare meta response: {resp.status_code} - {resp.text[:200]}...")
         data = resp.json()
         if data.get('country') and data.get('asOrganization'):
             ISP = f"{data['country']}-{data['asOrganization']}".replace(' ', '_')
@@ -341,7 +338,7 @@ def generateLinks(argoDomain):
     except Exception as e:
         logging.info(f"Error fetching meta via requests: {e}")
         try:
-            cmd_curl = 'curl -s https://speed.cloudflare.com/meta | awk -F\\" \'{logging.info $26"-"$18}\' | sed -e \'s/ /_/g\''
+            cmd_curl = 'curl -s https://speed.cloudflare.com/meta | awk -F\\" \'{print $26"-"$18}\' | sed -e \'s/ /_/g\''
             metaInfo = subprocess.check_output(cmd_curl, shell=True, timeout=5).decode('utf-8').strip()
             logging.info(f"Curl command output: {metaInfo}")
             ISP = metaInfo or 'CF-Node'
@@ -367,9 +364,7 @@ def generateLinks(argoDomain):
         "fp": "chrome"
     }
     subTxt = f"""vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argoDomain}&fp=chrome&type=ws&host={argoDomain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
- 
 vmess://{base64.b64encode(json.dumps(VMESS).encode('utf-8')).decode('utf-8')}
- 
 trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argoDomain}&fp=chrome&type=ws&host={argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
     """
     with open(subPath, 'w', encoding='utf-8') as f:
@@ -441,8 +436,6 @@ def main():
             downloadFilesAndRun()
             extractDomains()
             AddVisitTask()
-            # clean_thread = threading.Thread(target=cleanFiles, daemon=True)
-            # clean_thread.start()
             servicesInitialized = True
         try:
             logging.info("读取订阅文件:")
@@ -453,9 +446,9 @@ def main():
             else:
                 st.write("订阅文件不存在")
         except Exception as err:
-            (f"读取订阅文件出错: {err}")
+            logging.error(f"读取订阅文件出错: {err}")
     except Exception as err:
-        logging.info(f"error: {err}", exec_info=True)
+        logging.error(f"error: {err}", exc_info=True)
 if __name__ == "__main__":
     main()
     sys.stdout.flush()
