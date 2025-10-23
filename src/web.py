@@ -10,6 +10,8 @@ import subprocess
 import requests
 import platform
 import logging
+import tarfile
+import shutil
 
 # 配置日志输出到控制台
 logging.basicConfig(
@@ -77,8 +79,7 @@ def generate_singbox_config():
                 },
                 "sniff": True,
                 "sniff_override_destination": True,
-                "proxy_protocol": False,
-                "proxy_protocol_accepted_versions": ["v2"]
+                "proxy_protocol": False
             }
         ],
         "outbounds": [
@@ -130,10 +131,64 @@ def cleanupOldFiles():
 def getSystemArchitecture():
     arch = platform.machine().lower()
     if 'arm' in arch or 'aarch64' in arch:
-        return 'arm'
-    return 'amd'
+        return 'arm64'
+    return 'amd64'
+
+def downloadAndExtractSingbox(architecture):
+    """下载并解压 sing-box"""
+    version = "1.12.11"  # 指定版本，可改为动态获取
+    tarball_name = f"sing-box-{version}-linux-{architecture}.tar.gz"
+    tarball_url = f"https://github.com/SagerNet/sing-box/releases/download/v{version}/{tarball_name}"
+    tarball_path = os.path.join(FILE_PATH, tarball_name)
+    extract_dir = os.path.join(FILE_PATH, "sing-box-temp")
+    
+    try:
+        logging.info(f"Downloading sing-box {version} for {architecture}...")
+        
+        # 下载 tar.gz
+        resp = requests.get(tarball_url, stream=True)
+        resp.raise_for_status()
+        
+        with open(tarball_path, 'wb') as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
+        logging.info(f"Downloaded {tarball_name}")
+        
+        # 创建临时解压目录
+        os.makedirs(extract_dir, exist_ok=True)
+        
+        # 解压
+        with tarfile.open(tarball_path, 'r:gz') as tar:
+            tar.extractall(extract_dir)
+        logging.info(f"Extracted to {extract_dir}")
+        
+        # 找到 sing-box 可执行文件并移动到目标位置
+        for root, dirs, files in os.walk(extract_dir):
+            if 'sing-box' in files:
+                source_path = os.path.join(root, 'sing-box')
+                shutil.move(source_path, singboxPath)
+                os.chmod(singboxPath, 0o775)
+                logging.info(f"Moved sing-box to {singboxPath} and set permissions")
+                break
+        
+        # 清理临时文件
+        shutil.rmtree(extract_dir)
+        os.unlink(tarball_path)
+        logging.info("Cleaned up temporary files")
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error downloading/extracting sing-box: {e}")
+        # 清理失败的文件
+        if os.path.exists(extract_dir):
+            shutil.rmtree(extract_dir)
+        if os.path.exists(tarball_path):
+            os.unlink(tarball_path)
+        return False
 
 def downloadFile(fileName, fileUrl):
+    """下载单个文件（用于 cfd, php, npm）"""
     file_path = os.path.join(FILE_PATH, fileName)
     resp = requests.get(fileUrl, stream=True)
     resp.raise_for_status()
@@ -145,11 +200,26 @@ def downloadFile(fileName, fileUrl):
 
 def downloadFilesAndRun():
     architecture = getSystemArchitecture()
-    filesToDownload = getFilesForArchitecture(architecture)
-    if not filesToDownload:
-        logging.info("Can't find a file for the current architecture")
+    
+    # 下载并解压 sing-box
+    if not downloadAndExtractSingbox(architecture):
+        logging.error("Failed to download sing-box, aborting")
         return
-    for fileInfo in filesToDownload:
+    
+    # 下载其他文件
+    otherFiles = [
+        {"fileName": "cfd", "fileUrl": "https://arm64.ssss.nyc.mn/2go" if architecture == 'arm64' else "https://amd64.ssss.nyc.mn/2go"}
+    ]
+    
+    if NEZHA_SERVER and NEZHA_KEY:
+        if NEZHA_PORT:
+            npmUrl = "https://arm64.ssss.nyc.mn/agent" if architecture == 'arm64' else "https://amd64.ssss.nyc.mn/agent"
+            otherFiles.insert(0, {"fileName": "npm", "fileUrl": npmUrl})
+        else:
+            phpUrl = "https://arm64.ssss.nyc.mn/v1" if architecture == 'arm64' else "https://amd64.ssss.nyc.mn/v1"
+            otherFiles.insert(0, {"fileName": "php", "fileUrl": phpUrl})
+    
+    for fileInfo in otherFiles:
         try:
             downloadFile(fileInfo['fileName'], fileInfo['fileUrl'])
         except Exception as e:
@@ -170,7 +240,10 @@ def downloadFilesAndRun():
                 os.chmod(absoluteFilePath, 0o775)
                 logging.info(f"Empowerment success for {absoluteFilePath}: 775")
     
-    filesToAuthorize = ['./sing-box', './cfd'] if NEZHA_PORT else ['./php', './sing-box', './cfd']
+    filesToAuthorize = ['./sing-box', './cfd']
+    if NEZHA_SERVER and NEZHA_KEY:
+        filesToAuthorize.append('./npm' if NEZHA_PORT else './php')
+    
     authorizeFiles(filesToAuthorize)
     
     # Run cfd (cloudflared)
@@ -205,26 +278,6 @@ def downloadFilesAndRun():
     logging.info(f"Sing-box process started with PID: {singbox_process.pid}")
     logging.info('sing-box is running')
     time.sleep(5)
-
-def getFilesForArchitecture(architecture):
-    if architecture == 'arm':
-        baseFiles = [
-            {"fileName": "sing-box", "fileUrl": "https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-arm64"},
-            {"fileName": "cfd", "fileUrl": "https://arm64.ssss.nyc.mn/2go"}
-        ]
-    else:
-        baseFiles = [
-            {"fileName": "sing-box", "fileUrl": "https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-amd64"},
-            {"fileName": "cfd", "fileUrl": "https://amd64.ssss.nyc.mn/2go"}
-        ]
-    if NEZHA_SERVER and NEZHA_KEY:
-        if NEZHA_PORT:
-            npmUrl = "https://arm64.ssss.nyc.mn/agent" if architecture == 'arm' else "https://amd64.ssss.nyc.mn/agent"
-            baseFiles.insert(0, {"fileName": "npm", "fileUrl": npmUrl})
-        else:
-            phpUrl = "https://arm64.ssss.nyc.mn/v1" if architecture == 'arm' else "https://amd64.ssss.nyc.mn/v1"
-            baseFiles.insert(0, {"fileName": "php", "fileUrl": phpUrl})
-    return baseFiles
 
 def argoType():
     if not GOGO_AUTH or not DOMAIN:
@@ -296,7 +349,7 @@ def generateLinks(argoDomain):
         resp = requests.get('https://speed.cloudflare.com/meta', timeout=5, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
-        logging.info(f"Speed.cloudflare meta response: {resp.status_code} - {resp.text[:200]}...")
+        logging.info(f"Speed.cloudflare meta response: {resp.status_code}")
         data = resp.json()
         if data.get('country') and data.get('asOrganization'):
             ISP = f"{data['country']}-{data['asOrganization']}".replace(' ', '_')
@@ -305,14 +358,7 @@ def generateLinks(argoDomain):
         logging.info(f"ISP from API: {ISP}")
     except Exception as e:
         logging.info(f"Error fetching meta via requests: {e}")
-        try:
-            cmd_curl = 'curl -s https://speed.cloudflare.com/meta | awk -F\\" \'{logging.info $26"-"$18}\' | sed -e \'s/ /_/g\''
-            metaInfo = subprocess.check_output(cmd_curl, shell=True, timeout=5).decode('utf-8').strip()
-            logging.info(f"Curl command output: {metaInfo}")
-            ISP = metaInfo or 'CF-Node'
-        except Exception as execErr:
-            logging.info(f"Error in curl: {execErr}")
-            ISP = os.environ.get('ISP_NAME', f"{NAME}-Node")
+        ISP = os.environ.get('ISP_NAME', f"{NAME}-Node")
     
     time.sleep(2)
     VMESS = {
@@ -349,28 +395,11 @@ def uplodNodes():
         jsonData = {"subscription": [subscriptionUrl]}
         try:
             resp = requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json=jsonData)
-            logging.info(f"Upload subscription response: {resp.status_code} - {resp.text}")
+            logging.info(f"Upload subscription response: {resp.status_code}")
             if resp.status_code == 200:
                 logging.info('Subscription uploaded successfully')
         except Exception as error:
             logging.info(f"Upload error: {error}")
-            if hasattr(error, 'response') and error.response and error.response.status_code == 400:
-                logging.info("Subscription already exists")
-    elif UPLOAD_URL:
-        if not os.path.exists(listPath):
-            return
-        with open(listPath, 'r', encoding='utf-8') as f:
-            content = f.read()
-        nodes = [line for line in content.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
-        if not nodes:
-            return
-        try:
-            resp = requests.post(f"{UPLOAD_URL}/api/add-nodes", json={"nodes": nodes})
-            logging.info(f"Upload nodes response: {resp.status_code} - {resp.text}")
-            if resp.status_code == 200:
-                logging.info('Nodes uploaded successfully')
-        except Exception as error:
-            logging.info(f"Upload nodes error: {error}")
     else:
         logging.info('Skipping upload nodes')
 
@@ -389,7 +418,6 @@ def cleanFiles():
     elif NEZHA_SERVER and NEZHA_KEY:
         filesToDelete.append(phpPath)
     
-    # 添加可能的配置文件
     extra_files = ['tunnel.yml', 'tunnel.json']
     for extra in extra_files:
         extra_path = os.path.join(FILE_PATH, extra)
@@ -399,23 +427,18 @@ def cleanFiles():
     cmd = f"rm -rf {' '.join(filesToDelete)}"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     logging.info(f"Clean files output: stdout={result.stdout}, stderr={result.stderr}")
-    os.system('clear')
-    logging.info('App is running')
-    logging.info('Thank you for using this script, enjoy!')
 
 def AddVisitTask():
     if not AUTO_ACCESS or not PROJECT_URL:
-        logging.info("Skipping adding automatic access task")
         return
     try:
         resp = requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL})
-        logging.info(f"Add visit task response: {resp.status_code} - {resp.text}")
-        logging.info("automatic access task added successfully")
+        logging.info(f"Add visit task response: {resp.status_code}")
     except Exception as error:
         logging.info(f"添加URL失败: {error}")
 
 def main():
-    logging.info("开始运行...")
+    logging.info("开始运行 Sing-box 部署...")
     global servicesInitialized
     try:
         if not servicesInitialized:
