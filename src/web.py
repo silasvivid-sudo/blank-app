@@ -10,9 +10,6 @@ import subprocess
 import requests
 import platform
 import logging
-import tarfile
-import shutil
-
 # 配置日志输出到控制台
 logging.basicConfig(
     level=logging.INFO,
@@ -21,11 +18,10 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
-
 # Environment variables
 UPLOAD_URL = os.environ.get('UPLOAD_URL', '')
-PROJECT_URL = os.environ.get('PROJECT_URL', '')
-AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'false').lower() == 'true'
+PROJECT_URL = os.environ.get('PROJECT_URL', 'https://blank-app-2pgjkfzgsf8drhkjmdsz6e.streamlit.app/')
+AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'true').lower() == 'true'
 FILE_PATH = os.environ.get('FILE_PATH', './.npm')
 SUB_PATH = os.environ.get('SUB_PATH', 'sub')
 UUID = os.environ.get('UUID', '28713155-6f6d-4a2d-a6cd-5d9d9f28a36e')
@@ -37,67 +33,19 @@ GOGO_AUTH = os.environ.get('GOGO_AUTH', '')
 GOGO_PORT = int(os.environ.get('GOGO_PORT', 8001))
 CFIP = os.environ.get('CFIP', 'cf.090227.xyz')
 CFPORT = int(os.environ.get('CFPORT', 443))
-NAME = os.environ.get('NAME', 'Sing-box')
-
+NAME = os.environ.get('NAME', 'Streamlit')
 # Paths
 os.makedirs(FILE_PATH, exist_ok=True)
 logging.info(f"{FILE_PATH} is created" if not os.path.exists(FILE_PATH) else f"{FILE_PATH} already exists")
-
+npmPath = os.path.join(FILE_PATH, 'npm')
 phpPath = os.path.join(FILE_PATH, 'php')
-singboxPath = os.path.join(FILE_PATH, 'sing-box')
-cloudflaredPath = os.path.join(FILE_PATH, 'cloudflared')
+sbPath = os.path.join(FILE_PATH, 'sb')
+webPath = os.path.join(FILE_PATH, 'cfd')
 subPath = os.path.join(FILE_PATH, 'sub.txt')
 listPath = os.path.join(FILE_PATH, 'list.txt')
 bootLogPath = os.path.join(FILE_PATH, 'boot.log')
-singboxConfigPath = os.path.join(FILE_PATH, 'sing-box.json')
-
+configPath = os.path.join(FILE_PATH, 'config.json')
 servicesInitialized = os.path.exists(subPath)
-
-def generate_singbox_config():
-    """生成 sing-box 配置文件 - ✅ 单一 HTTP inbound + WS 路由"""
-    config = {
-        "log": {
-            "level": "info"
-        },
-        "inbounds": [
-            # ✅ 单一 HTTP inbound (监听 8001，支持健康检查 + WS)
-            {
-                "type": "http",
-                "tag": "http-in",
-                "listen": "::",
-                "listen_port": GOGO_PORT,
-                "sniff": True,
-                "sniff_override_destination": True
-            }
-        ],
-        "outbounds": [
-            {
-                "type": "direct",
-                "tag": "direct"
-            },
-            {
-                "type": "block",
-                "tag": "block"
-            }
-        ],
-        "route": {
-            "rules": [
-                # ✅ WS 流量直连 (匹配 vless/vmess/trojan WS)
-                {
-                    "network": "ws",
-                    "port": GOGO_PORT,
-                    "outbound": "direct"
-                },
-                # ✅ 所有其他 HTTP 流量丢弃 (健康检查)
-                {
-                    "inbound": "http-in",
-                    "outbound": "block"
-                }
-            ]
-        }
-    }
-    return config
-
 def deleteNodes():
     try:
         if not UPLOAD_URL:
@@ -114,177 +62,207 @@ def deleteNodes():
         logging.info(f"Delete nodes response: {response.status_code} - {response.text}")
     except Exception as e:
         logging.info(f"Error in deleteNodes: {e}")
-
 def cleanupOldFiles():
-    pathsToDelete = [
-        'sing-box',
-        'cloudflared',
-        'php',
-        'sub.txt',
-        'boot.log',
-        'sing-box.json',
-        'tunnel.yml',
-        'tunnel.json'
-    ]
+    pathsToDelete = ['web', 'cfd', 'npm', 'php', 'sb', 'sub.txt', 'boot.log']
     for file in pathsToDelete:
         filePath = os.path.join(FILE_PATH, file)
         if os.path.exists(filePath):
             os.unlink(filePath)
             logging.info(f"Cleaned up {filePath}")
-
+# Generate sb config
+config = {
+    "log": {
+        "level": "debug"
+    },
+    "inbounds": [
+        {
+            "type": "mixed",
+            "listen": "::",
+            "listen_port": GOGO_PORT,
+            "sniff": true,
+            "domain_strategy": "ipv4_only"
+        },
+        {
+            "type": "vless",
+            "tag": "vless-in",
+            "listen": "127.0.0.1",
+            "listen_port": 3001,
+            "users": [
+                {
+                    "uuid": UUID,
+                    "flow": "xtls-rprx-vision"
+                }
+            ],
+            "tls": {
+                "enabled": false
+            }
+        },
+        {
+            "type": "vless",
+            "tag": "vless-ws-in",
+            "listen": "127.0.0.1",
+            "listen_port": 3002,
+            "users": [
+                {
+                    "uuid": UUID
+                }
+            ],
+            "transport": {
+                "type": "ws",
+                "path": "/vless-argo"
+            },
+            "sniff": true
+        },
+        {
+            "type": "vmess",
+            "tag": "vmess-ws-in",
+            "listen": "127.0.0.1",
+            "listen_port": 3003,
+            "users": [
+                {
+                    "uuid": UUID,
+                    "alter_id": 0
+                }
+            ],
+            "transport": {
+                "type": "ws",
+                "path": "/vmess-argo"
+            },
+            "sniff": true
+        },
+        {
+            "type": "trojan",
+            "tag": "trojan-ws-in",
+            "listen": "127.0.0.1",
+            "listen_port": 3004,
+            "users": [
+                {
+                    "password": UUID
+                }
+            ],
+            "transport": {
+                "type": "ws",
+                "path": "/trojan-argo"
+            },
+            "sniff": true
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "direct",
+            "tag": "direct"
+        },
+        {
+            "type": "block",
+            "tag": "block"
+        }
+    ],
+    "route": {
+        "rules": [
+            {
+                "inbound": ["vless-in", "vless-ws-in", "vmess-ws-in", "trojan-ws-in"],
+                "outbound": "direct"
+            }
+        ]
+    },
+    "dns": {
+        "servers": [
+            {
+                "address": "8.8.8.8",
+                "detour": "direct"
+            }
+        ]
+    }
+}
+with open(os.path.join(FILE_PATH, 'config.json'), 'w') as f:
+    json.dump(config, f, indent=2)
 def getSystemArchitecture():
     arch = platform.machine().lower()
     if 'arm' in arch or 'aarch64' in arch:
-        return 'arm64'
-    return 'amd64'
-
-def downloadAndExtractSingbox(architecture):
-    """下载并解压 sing-box"""
-    version = "1.12.11"
-    tarball_name = f"sing-box-{version}-linux-{architecture}.tar.gz"
-    tarball_url = f"https://github.com/SagerNet/sing-box/releases/download/v{version}/{tarball_name}"
-    tarball_path = os.path.join(FILE_PATH, tarball_name)
-    extract_dir = os.path.join(FILE_PATH, "sing-box-temp")
-   
-    try:
-        logging.info(f"Downloading sing-box {version} for {architecture}...")
-       
-        resp = requests.get(tarball_url, stream=True)
-        resp.raise_for_status()
-       
-        with open(tarball_path, 'wb') as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-        logging.info(f"Downloaded {tarball_name}")
-       
-        os.makedirs(extract_dir, exist_ok=True)
-       
-        with tarfile.open(tarball_path, 'r:gz') as tar:
-            tar.extractall(extract_dir)
-        logging.info(f"Extracted to {extract_dir}")
-       
-        for root, dirs, files in os.walk(extract_dir):
-            if 'sing-box' in files:
-                source_path = os.path.join(root, 'sing-box')
-                shutil.move(source_path, singboxPath)
-                os.chmod(singboxPath, 0o775)
-                logging.info(f"Moved sing-box to {singboxPath} and set permissions")
-                break
-       
-        shutil.rmtree(extract_dir)
-        os.unlink(tarball_path)
-        logging.info("Cleaned up temporary files")
-       
-        return True
-       
-    except Exception as e:
-        logging.error(f"Error downloading/extracting sing-box: {e}")
-        if os.path.exists(extract_dir):
-            shutil.rmtree(extract_dir)
-        if os.path.exists(tarball_path):
-            os.unlink(tarball_path)
-        return False
-
-def downloadCloudflared(architecture):
-    """下载官方 cloudflared 可执行文件"""
-    version = "2025.10.0"
-    filename = f"cloudflared-linux-{architecture}"
-    url = f"https://github.com/cloudflare/cloudflared/releases/download/{version}/{filename}"
-   
-    try:
-        logging.info(f"Downloading cloudflared {version} for {architecture}...")
-        resp = requests.get(url, stream=True)
-        resp.raise_for_status()
-       
-        with open(cloudflaredPath, 'wb') as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-        logging.info(f"Downloaded {filename}")
-       
-        os.chmod(cloudflaredPath, 0o775)
-        logging.info(f"Set permissions for {cloudflaredPath}: 775")
-       
-        return True
-       
-    except Exception as e:
-        logging.error(f"Error downloading cloudflared: {e}")
-        if os.path.exists(cloudflaredPath):
-            os.unlink(cloudflaredPath)
-        return False
-
+        return 'arm'
+    return 'amd'
 def downloadFile(fileName, fileUrl):
-    """下载单个文件（用于 php, npm）"""
     file_path = os.path.join(FILE_PATH, fileName)
     resp = requests.get(fileUrl, stream=True)
     resp.raise_for_status()
     with open(file_path, 'wb') as f:
         for chunk in resp.iter_content(chunk_size=8192):
             f.write(chunk)
-    os.chmod(file_path, 0o775)
     logging.info(f"Download {fileName} successfully")
     return fileName
-
 def downloadFilesAndRun():
     architecture = getSystemArchitecture()
-   
-    if not downloadAndExtractSingbox(architecture):
-        logging.error("Failed to download sing-box, aborting")
+    filesToDownload = getFilesForArchitecture(architecture)
+    if not filesToDownload:
+        logging.info("Can't find a file for the current architecture")
         return
-   
-    if not downloadCloudflared(architecture):
-        logging.error("Failed to download cloudflared, aborting")
-        return
-   
-    otherFiles = []
-    if NEZHA_SERVER and NEZHA_KEY:
-        if NEZHA_PORT:
-            npmUrl = "https://arm64.ssss.nyc.mn/agent" if architecture == 'arm64' else "https://amd64.ssss.nyc.mn/agent"
-            otherFiles.append({"fileName": "npm", "fileUrl": npmUrl})
-        else:
-            phpUrl = "https://arm64.ssss.nyc.mn/v1" if architecture == 'arm64' else "https://amd64.ssss.nyc.mn/v1"
-            otherFiles.append({"fileName": "php", "fileUrl": phpUrl})
-   
-    for fileInfo in otherFiles:
+    for fileInfo in filesToDownload:
         try:
             downloadFile(fileInfo['fileName'], fileInfo['fileUrl'])
         except Exception as e:
             logging.info(f"Error downloading {fileInfo['fileName']}: {e}")
             return
-   
-    config = generate_singbox_config()
-    with open(singboxConfigPath, 'w') as f:
-        json.dump(config, f, indent=2)
-    logging.info("Sing-box config generated")
-   
-    logging.info('Starting sing-box...')
-    singbox_process = subprocess.Popen(
-        [singboxPath, 'run', '-c', singboxConfigPath],
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-        text=True
-    )
-    logging.info(f"Sing-box process started with PID: {singbox_process.pid}")
-    time.sleep(3)
-   
-    if os.path.exists(cloudflaredPath):
+    # Authorize files
+    def authorizeFiles(filePaths):
+        for relativeFilePath in filePaths:
+            absoluteFilePath = os.path.join(FILE_PATH, relativeFilePath)
+            if os.path.exists(absoluteFilePath):
+                os.chmod(absoluteFilePath, 0o775)
+                logging.info(f"Empowerment success for {absoluteFilePath}: 775")
+    filesToAuthorize = ['./npm', './sb', './cfd'] if NEZHA_PORT else ['./php', './sb', './cfd']
+    authorizeFiles(filesToAuthorize)
+    # Run cfd (cloudflared)
+    cfd_path = os.path.join(FILE_PATH, 'cfd')
+    if os.path.exists(cfd_path):
         if re.match(r'^[A-Z0-9a-z=]{120,250}$', GOGO_AUTH):
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token {GOGO_AUTH}"
         elif 'TunnelSecret' in GOGO_AUTH:
             args = f"tunnel --edge-ip-version auto --config {os.path.join(FILE_PATH, 'tunnel.yml')} run"
         else:
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {os.path.join(FILE_PATH, 'boot.log')} --loglevel info --url http://localhost:{GOGO_PORT}"
-      
-        cloudflared_cmd = [cloudflaredPath] + args.split()
-        cloudflared_process = subprocess.Popen(
-            cloudflared_cmd,
+       
+        # 使用subprocess.Popen替代nohup方式
+        cfd_cmd = [cfd_path] + args.split()
+        cfd_process = subprocess.Popen(
+            cfd_cmd,
             stdout=sys.stdout,
             stderr=sys.stderr,
             text=True
         )
-        logging.info(f"Cloudflared process started with PID: {cloudflared_process.pid}")
-        logging.info('cloudflared is running')
+        logging.info(f"CFD process started with PID: {cfd_process.pid}")
+        logging.info('cfd is running')
         time.sleep(2)
-
+    # Run sb
+    logging.info('Starting sb')
+    # 使用subprocess.Popen替代nohup方式
+    sb_process = subprocess.Popen(
+        [os.path.join(FILE_PATH, 'sb'), 'run', '-c', os.path.join(FILE_PATH, 'config.json')],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        text=True
+    )
+    logging.info(f"Sb process started with PID: {sb_process.pid}")
+    logging.info('sb is running')
+    time.sleep(5)
+def getFilesForArchitecture(architecture):
+    if architecture == 'arm':
+        baseFiles = [
+            {"fileName": "sb", "fileUrl": "https://arm64.ssss.nyc.mn/web"},
+            {"fileName": "cfd", "fileUrl": "https://arm64.ssss.nyc.mn/2go"}
+        ]
+    else:
+        baseFiles = [
+            {"fileName": "sb", "fileUrl": "https://amd64.ssss.nyc.mn/web"},
+            {"fileName": "cfd", "fileUrl": "https://amd64.ssss.nyc.mn/2go"}
+        ]
+    if NEZHA_SERVER and NEZHA_KEY:
+        if NEZHA_PORT:
+            npmUrl = "https://arm64.ssss.nyc.mn/agent" if architecture == 'arm' else "https://amd64.ssss.nyc.mn/agent"
+            baseFiles.insert(0, {"fileName": "npm", "fileUrl": npmUrl})
+        else:
+            phpUrl = "https://arm64.ssss.nyc.mn/v1" if architecture == 'arm' else "https://amd64.ssss.nyc.mn/v1"
+            baseFiles.insert(0, {"fileName": "php", "fileUrl": phpUrl})
+    return baseFiles
 def argoType():
     if not GOGO_AUTH or not DOMAIN:
         logging.info("DOMAIN or GOGO_AUTH variable is empty, use quick tunnels")
@@ -296,6 +274,7 @@ def argoType():
         tunnel_yaml = f""" tunnel: {tunnel_id}
   credentials-file: {os.path.join(FILE_PATH, 'tunnel.json')}
   protocol: http2
+ 
   ingress:
     - hostname: {DOMAIN}
       service: http://localhost:{GOGO_PORT}
@@ -307,7 +286,6 @@ def argoType():
             f.write(tunnel_yaml)
     else:
         logging.info("GOGO_AUTH mismatch TunnelSecret,use token connect to tunnel")
-
 def extractDomains():
     argoDomain = None
     if GOGO_AUTH and DOMAIN:
@@ -326,27 +304,26 @@ def extractDomains():
                 argoDomains.append(match.group(1))
         if argoDomains:
             argoDomain = argoDomains[0]
-            logging.info(f'ArgoDomain: {argoDomain}')
+            logging.info('ArgoDomain:', argoDomain)
             generateLinks(argoDomain)
         else:
-            logging.info('ArgoDomain not found, re-running cloudflared to obtain ArgoDomain')
+            logging.info('ArgoDomain not found, re-running cfd to obtain ArgoDomain')
             boot_log = os.path.join(FILE_PATH, 'boot.log')
             if os.path.exists(boot_log):
                 os.unlink(boot_log)
-            cmd_kill = 'pkill -f "cloudflared" > /dev/null 2>&1'
+            cmd_kill = 'pkill -f "[b]ot" > /dev/null 2>&1'
             result_kill = subprocess.run(cmd_kill, shell=True, capture_output=True, text=True)
             logging.info(f"Pkill output: stdout={result_kill.stdout}, stderr={result_kill.stderr}")
             time.sleep(3)
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {boot_log} --loglevel info --url http://localhost:{GOGO_PORT}"
-            cmd = f"nohup {cloudflaredPath} {args} &"
+            cmd = f"nohup {os.path.join(FILE_PATH, 'cfd')} {args} &"
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            logging.info(f"Re-run cloudflared command output: stdout={result.stdout}, stderr={result.stderr}")
-            logging.info('cloudflared is running.')
+            logging.info(f"Re-run CFD command output: stdout={result.stdout}, stderr={result.stderr}")
+            logging.info('cfd is running.')
             time.sleep(3)
-            extractDomains()
+            extractDomains() # Recurse
     except Exception as error:
         logging.info(f'Error reading boot.log: {error}')
-
 def generateLinks(argoDomain):
     global ISP
     ISP = 'Unknown'
@@ -354,7 +331,7 @@ def generateLinks(argoDomain):
         resp = requests.get('https://speed.cloudflare.com/meta', timeout=5, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
-        logging.info(f"Speed.cloudflare meta response: {resp.status_code}")
+        logging.info(f"Speed.cloudflare meta response: {resp.status_code} - {resp.text[:200]}...") # logging.info partial response
         data = resp.json()
         if data.get('country') and data.get('asOrganization'):
             ISP = f"{data['country']}-{data['asOrganization']}".replace(' ', '_')
@@ -363,8 +340,14 @@ def generateLinks(argoDomain):
         logging.info(f"ISP from API: {ISP}")
     except Exception as e:
         logging.info(f"Error fetching meta via requests: {e}")
-        ISP = os.environ.get('ISP_NAME', f"{NAME}-Node")
-   
+        try:
+            cmd_curl = 'curl -s https://speed.cloudflare.com/meta | awk -F\\" \'{logging.info $26"-"$18}\' | sed -e \'s/ /_/g\''
+            metaInfo = subprocess.check_output(cmd_curl, shell=True, timeout=5).decode('utf-8').strip()
+            logging.info(f"Curl command output: {metaInfo}")
+            ISP = metaInfo or 'CF-Node'
+        except Exception as execErr:
+            logging.info(f"Error in curl: {execErr}")
+            ISP = os.environ.get('ISP_NAME', f"{NAME}-Node")
     time.sleep(2)
     VMESS = {
         "v": "2",
@@ -377,63 +360,65 @@ def generateLinks(argoDomain):
         "net": "ws",
         "type": "none",
         "host": argoDomain,
-        "path": "/vless-argo?ed=2560",
+        "path": "/vmess-argo?ed=2560",
         "tls": "tls",
         "sni": argoDomain,
         "alpn": "",
         "fp": "chrome"
     }
     subTxt = f"""vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argoDomain}&fp=chrome&type=ws&host={argoDomain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
+ 
 vmess://{base64.b64encode(json.dumps(VMESS).encode('utf-8')).decode('utf-8')}
+ 
 trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argoDomain}&fp=chrome&type=ws&host={argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
     """
     with open(subPath, 'w', encoding='utf-8') as f:
         f.write(base64.b64encode(subTxt.encode('utf-8')).decode('utf-8'))
     logging.info(f"{FILE_PATH}/sub.txt saved successfully with ISP: {ISP}")
     uplodNodes()
-
 def uplodNodes():
     if UPLOAD_URL and PROJECT_URL:
         subscriptionUrl = f"{PROJECT_URL}/{SUB_PATH}"
         jsonData = {"subscription": [subscriptionUrl]}
         try:
             resp = requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json=jsonData)
-            logging.info(f"Upload subscription response: {resp.status_code}")
+            logging.info(f"Upload subscription response: {resp.status_code} - {resp.text}")
             if resp.status_code == 200:
                 logging.info('Subscription uploaded successfully')
         except Exception as error:
             logging.info(f"Upload error: {error}")
+            if hasattr(error, 'response') and error.response and error.response.status_code == 400:
+                logging.info("Subscription already exists")
+    elif UPLOAD_URL:
+        if not os.path.exists(listPath):
+            return
+        with open(listPath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        nodes = [line for line in content.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
+        if not nodes:
+            return
+        try:
+            resp = requests.post(f"{UPLOAD_URL}/api/add-nodes", json={"nodes": nodes})
+            logging.info(f"Upload nodes response: {resp.status_code} - {resp.text}")
+            if resp.status_code == 200:
+                logging.info('Nodes uploaded successfully')
+        except Exception as error:
+            logging.info(f"Upload nodes error: {error}")
     else:
         logging.info('Skipping upload nodes')
-
 def cleanFiles():
     time.sleep(90)
-    filesToDelete = [
-        bootLogPath,
-        singboxConfigPath,
-        singboxPath,
-        cloudflaredPath,
-        phpPath
-    ]
+    filesToDelete = [bootLogPath, configPath, sbPath, webPath, phpPath, npmPath]
     if NEZHA_PORT:
-        npmPath = os.path.join(FILE_PATH, 'npm')
         filesToDelete.append(npmPath)
     elif NEZHA_SERVER and NEZHA_KEY:
         filesToDelete.append(phpPath)
-   
-    extra_files = ['tunnel.yml', 'tunnel.json']
-    for extra in extra_files:
-        extra_path = os.path.join(FILE_PATH, extra)
-        if os.path.exists(extra_path):
-            filesToDelete.append(extra_path)
-   
     cmd = f"rm -rf {' '.join(filesToDelete)}"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     logging.info(f"Clean files output: stdout={result.stdout}, stderr={result.stderr}")
     os.system('clear')
     logging.info('App is running')
     logging.info('Thank you for using this script, enjoy!')
-
 def AddVisitTask():
     if not AUTO_ACCESS or not PROJECT_URL:
         logging.info("Skipping adding automatic access task")
@@ -444,9 +429,8 @@ def AddVisitTask():
         logging.info("automatic access task added successfully")
     except Exception as error:
         logging.info(f"添加URL失败: {error}")
-
 def main():
-    logging.info("开始运行 Sing-box + Cloudflared 部署...")
+    logging.info("开始运行...")
     global servicesInitialized
     try:
         if not servicesInitialized:
@@ -457,8 +441,9 @@ def main():
             downloadFilesAndRun()
             extractDomains()
             AddVisitTask()
+            # clean_thread = threading.Thread(target=cleanFiles, daemon=True)
+            # clean_thread.start()
             servicesInitialized = True
-       
         try:
             logging.info("读取订阅文件:")
             if os.path.exists(subPath):
@@ -468,10 +453,9 @@ def main():
             else:
                 st.write("订阅文件不存在")
         except Exception as err:
-            logging.info(f"读取订阅文件出错: {err}")
+            (f"读取订阅文件出错: {err}")
     except Exception as err:
-        logging.info(f"error: {err}", exc_info=True)
-
+        logging.info(f"error: {err}", exec_info=True)
 if __name__ == "__main__":
     main()
     sys.stdout.flush()
