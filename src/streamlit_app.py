@@ -34,7 +34,7 @@ NEZHA_KEY = os.environ.get('NEZHA_KEY', '')
 DOMAIN = os.environ.get('DOMAIN', '')
 GOGO_AUTH = os.environ.get('GOGO_AUTH', '')
 GOGO_PORT = int(os.environ.get('GOGO_PORT', 8001))
-CFIP = os.environ.get('CFIP', 'cf.090227.xyz')
+CFIP = os.environ.get('CFIP', '194.53.53.7')
 CFPORT = int(os.environ.get('CFPORT', 443))
 NAME = os.environ.get('NAME', 'Streamlit')
 
