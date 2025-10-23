@@ -21,7 +21,7 @@ logging.basicConfig(
 # Environment variables
 UPLOAD_URL = os.environ.get('UPLOAD_URL', '')
 PROJECT_URL = os.environ.get('PROJECT_URL', 'https://blank-app-2pgjkfzgsf8drhkjmdsz6e.streamlit.app/')
-AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'true').lower() == 'true'
+AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'True').lower() == 'True'
 FILE_PATH = os.environ.get('FILE_PATH', './.npm')
 SUB_PATH = os.environ.get('SUB_PATH', 'sub')
 UUID = os.environ.get('UUID', '28713155-6f6d-4a2d-a6cd-5d9d9f28a36e')
@@ -79,7 +79,7 @@ config = {
             "type": "mixed",
             "listen": "::",
             "listen_port": GOGO_PORT,
-            "sniff": true,
+            "sniff": True,
             "domain_strategy": "ipv4_only"
         },
         {
@@ -111,7 +111,7 @@ config = {
                 "type": "ws",
                 "path": "/vless-argo"
             },
-            "sniff": true
+            "sniff": True
         },
         {
             "type": "vmess",
@@ -128,7 +128,7 @@ config = {
                 "type": "ws",
                 "path": "/vmess-argo"
             },
-            "sniff": true
+            "sniff": True
         },
         {
             "type": "trojan",
@@ -144,7 +144,7 @@ config = {
                 "type": "ws",
                 "path": "/trojan-argo"
             },
-            "sniff": true
+            "sniff": True
         }
     ],
     "outbounds": [
@@ -279,7 +279,7 @@ def argoType():
     - hostname: {DOMAIN}
       service: http://localhost:{GOGO_PORT}
       originRequest:
-        noTLSVerify: true
+        noTLSVerify: True
     - service: http_status:404
   """
         with open(os.path.join(FILE_PATH, 'tunnel.yml'), 'w') as f:
