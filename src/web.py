@@ -88,7 +88,7 @@ def cleanupOldFiles():
             os.unlink(filePath)
             logging.info(f"Cleaned up {filePath}")
 
-# Generate sb config - ✅ VMess 已修复
+# Generate sb config - ✅ VMess 已修复，端口统一为 8001
 config = {
     "log": {
         "level": "info"
@@ -266,8 +266,6 @@ def getFilesForArchitecture(architecture):
             baseFiles.insert(0, {"fileName": "php", "fileUrl": phpUrl})
     return baseFiles
 
-# ... 其他函数保持不变（argoType, extractDomains, generateLinks, uplodNodes, cleanFiles, AddVisitTask, main）
-
 def argoType():
     if not GOGO_AUTH or not DOMAIN:
         logging.info("DOMAIN or GOGO_AUTH variable is empty, use quick tunnels")
@@ -291,7 +289,151 @@ def argoType():
     else:
         logging.info("GOGO_AUTH mismatch TunnelSecret,use token connect to tunnel")
 
-# ... 其余函数（extractDomains, generateLinks, uplodNodes, cleanFiles, AddVisitTask）保持不变
+def extractDomains():
+    argoDomain = None
+    if GOGO_AUTH and DOMAIN:
+        argoDomain = DOMAIN
+        logging.info(f'DOMAIN: {argoDomain}')
+        generateLinks(argoDomain)
+        return
+    try:
+        with open(os.path.join(FILE_PATH, 'boot.log'), 'r', encoding='utf-8') as f:
+            fileContent = f.read()
+        lines = fileContent.split('\n')
+        argoDomains = []
+        for line in lines:
+            match = re.search(r'https?://([^ ]*trycloudflare\.com)/?', line)
+            if match:
+                argoDomains.append(match.group(1))
+        if argoDomains:
+            argoDomain = argoDomains[0]
+            logging.info('ArgoDomain:', argoDomain)
+            generateLinks(argoDomain)
+        else:
+            logging.info('ArgoDomain not found, re-running cfd to obtain ArgoDomain')
+            boot_log = os.path.join(FILE_PATH, 'boot.log')
+            if os.path.exists(boot_log):
+                os.unlink(boot_log)
+            cmd_kill = 'pkill -f "[b]ot" > /dev/null 2>&1'
+            result_kill = subprocess.run(cmd_kill, shell=True, capture_output=True, text=True)
+            logging.info(f"Pkill output: stdout={result_kill.stdout}, stderr={result_kill.stderr}")
+            time.sleep(3)
+            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {boot_log} --loglevel info --url http://localhost:8001"
+            cmd = f"nohup {os.path.join(FILE_PATH, 'cfd')} {args} &"
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            logging.info(f"Re-run CFD command output: stdout={result.stdout}, stderr={result.stderr}")
+            logging.info('cfd is running.')
+            time.sleep(3)
+            extractDomains() # Recurse
+    except Exception as error:
+        logging.info(f'Error reading boot.log: {error}')
+
+def generateLinks(argoDomain):
+    global ISP
+    ISP = 'Unknown'
+    try:
+        resp = requests.get('https://speed.cloudflare.com/meta', timeout=5, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        logging.info(f"Speed.cloudflare meta response: {resp.status_code} - {resp.text[:200]}...")
+        data = resp.json()
+        if data.get('country') and data.get('asOrganization'):
+            ISP = f"{data['country']}-{data['asOrganization']}".replace(' ', '_')
+        else:
+            ISP = data.get('country') or data.get('asOrganization') or 'CF-Node'
+        logging.info(f"ISP from API: {ISP}")
+    except Exception as e:
+        logging.info(f"Error fetching meta via requests: {e}")
+        try:
+            cmd_curl = 'curl -s https://speed.cloudflare.com/meta | awk -F\\" \'{print $26"-"$18}\' | sed -e \'s/ /_/g\''
+            metaInfo = subprocess.check_output(cmd_curl, shell=True, timeout=5).decode('utf-8').strip()
+            logging.info(f"Curl command output: {metaInfo}")
+            ISP = metaInfo or 'CF-Node'
+        except Exception as execErr:
+            logging.info(f"Error in curl: {execErr}")
+            ISP = os.environ.get('ISP_NAME', f"{NAME}-Node")
+    time.sleep(2)
+    VMESS = {
+        "v": "2",
+        "ps": f"{NAME}-{ISP}",
+        "add": CFIP,
+        "port": CFPORT,
+        "id": UUID,
+        "aid": "0",
+        "scy": "none",
+        "net": "ws",
+        "type": "none",
+        "host": argoDomain,
+        "path": "/vmess-argo?ed=2560",
+        "tls": "tls",
+        "sni": argoDomain,
+        "alpn": "",
+        "fp": "chrome"
+    }
+    subTxt = f"""vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argoDomain}&fp=chrome&type=ws&host={argoDomain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
+vmess://{base64.b64encode(json.dumps(VMESS).encode('utf-8')).decode('utf-8')}
+trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argoDomain}&fp=chrome&type=ws&host={argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
+    """
+    with open(subPath, 'w', encoding='utf-8') as f:
+        f.write(base64.b64encode(subTxt.encode('utf-8')).decode('utf-8'))
+    logging.info(f"{FILE_PATH}/sub.txt saved successfully with ISP: {ISP}")
+    uplodNodes()
+
+def uplodNodes():
+    if UPLOAD_URL and PROJECT_URL:
+        subscriptionUrl = f"{PROJECT_URL}/{SUB_PATH}"
+        jsonData = {"subscription": [subscriptionUrl]}
+        try:
+            resp = requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json=jsonData)
+            logging.info(f"Upload subscription response: {resp.status_code} - {resp.text}")
+            if resp.status_code == 200:
+                logging.info('Subscription uploaded successfully')
+        except Exception as error:
+            logging.info(f"Upload error: {error}")
+            if hasattr(error, 'response') and error.response and error.response.status_code == 400:
+                logging.info("Subscription already exists")
+    elif UPLOAD_URL:
+        if not os.path.exists(listPath):
+            return
+        with open(listPath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        nodes = [line for line in content.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
+        if not nodes:
+            return
+        try:
+            resp = requests.post(f"{UPLOAD_URL}/api/add-nodes", json={"nodes": nodes})
+            logging.info(f"Upload nodes response: {resp.status_code} - {resp.text}")
+            if resp.status_code == 200:
+                logging.info('Nodes uploaded successfully')
+        except Exception as error:
+            logging.info(f"Upload nodes error: {error}")
+    else:
+        logging.info('Skipping upload nodes')
+
+def cleanFiles():
+    time.sleep(90)
+    filesToDelete = [bootLogPath, configPath, sbPath, webPath, phpPath, npmPath]
+    if NEZHA_PORT:
+        filesToDelete.append(npmPath)
+    elif NEZHA_SERVER and NEZHA_KEY:
+        filesToDelete.append(phpPath)
+    cmd = f"rm -rf {' '.join(filesToDelete)}"
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    logging.info(f"Clean files output: stdout={result.stdout}, stderr={result.stderr}")
+    os.system('clear')
+    logging.info('App is running')
+    logging.info('Thank you for using this script, enjoy!')
+
+def AddVisitTask():
+    if not AUTO_ACCESS or not PROJECT_URL:
+        logging.info("Skipping adding automatic access task")
+        return
+    try:
+        resp = requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL})
+        logging.info(f"Add visit task response: {resp.status_code} - {resp.text}")
+        logging.info("automatic access task added successfully")
+    except Exception as error:
+        logging.info(f"添加URL失败: {error}")
 
 def main():
     logging.info("开始运行...")
