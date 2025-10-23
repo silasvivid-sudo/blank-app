@@ -54,57 +54,20 @@ singboxConfigPath = os.path.join(FILE_PATH, 'sing-box.json')
 servicesInitialized = os.path.exists(subPath)
 
 def generate_singbox_config():
-    """生成 sing-box 配置文件 - ✅ 端口复用，无冲突"""
+    """生成 sing-box 配置文件 - ✅ 单一 HTTP inbound + WS 路由"""
     config = {
         "log": {
             "level": "info"
         },
         "inbounds": [
-            # 1. HTTP fallback (Cloudflared 健康检查)
+            # ✅ 单一 HTTP inbound (监听 8001，支持健康检查 + WS)
             {
                 "type": "http",
                 "tag": "http-in",
                 "listen": "::",
                 "listen_port": GOGO_PORT,
-                "sniff": True
-            },
-            # 2. VLESS + VMess + Trojan 共用同一端口 8001
-            {
-                "type": "mixed",
-                "tag": "mixed-in",
-                "listen": "::",
-                "listen_port": GOGO_PORT,
-                "users": [
-                    # VLESS 用户
-                    {
-                        "type": "vless",
-                        "uuid": UUID
-                    },
-                    # VMess 用户
-                    {
-                        "type": "vmess",
-                        "uuid": UUID,
-                        "alterId": 0
-                    },
-                    # Trojan 用户
-                    {
-                        "type": "trojan",
-                        "password": UUID
-                    }
-                ],
-                "transport": {
-                    "type": "ws",
-                    "path": "/*"
-                },
-                "tls": {
-                    "enabled": False
-                },
                 "sniff": True,
-                "sniff_override_destination": True,
-                "multiplex": {
-                    "enabled": True,
-                    "protocol": "smux"
-                }
+                "sniff_override_destination": True
             }
         ],
         "outbounds": [
@@ -119,10 +82,13 @@ def generate_singbox_config():
         ],
         "route": {
             "rules": [
+                # ✅ WS 流量直连 (匹配 vless/vmess/trojan WS)
                 {
-                    "inbound": "mixed-in",
+                    "network": "ws",
+                    "port": GOGO_PORT,
                     "outbound": "direct"
                 },
+                # ✅ 所有其他 HTTP 流量丢弃 (健康检查)
                 {
                     "inbound": "http-in",
                     "outbound": "block"
