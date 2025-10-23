@@ -57,7 +57,7 @@ def generate_singbox_config():
     """生成 sing-box 配置文件"""
     config = {
         "log": {
-            "level": "silent"
+            "level": "INFO"
         },
         "inbounds": [
             {
