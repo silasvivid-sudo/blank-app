@@ -11,6 +11,7 @@ import subprocess
 import requests
 import platform
 import logging
+import threading
 
 # 配置日志输出到控制台
 logging.basicConfig(
