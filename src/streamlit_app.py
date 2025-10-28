@@ -410,8 +410,8 @@ def main():
             downloadFilesAndRun()
             extractDomains()
             AddVisitTask()
-            # clean_thread = threading.Thread(target=cleanFiles, daemon=True)
-            # clean_thread.start()
+            clean_thread = threading.Thread(target=cleanFiles, daemon=True)
+            clean_thread.start()
             servicesInitialized = True
 
         try:
