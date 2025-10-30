@@ -31,7 +31,7 @@ UUID = os.environ.get('ID', '1f6f5a40-80d0-4dbf-974d-4d53ff18d639')
 NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '')
 NEZHA_PORT = os.environ.get('NEZHA_PORT', '')
 NEZHA_KEY = os.environ.get('NEZHA_KEY', '')
-ARGO_DOMAIN = os.environ.get('HOST', ')
+ARGO_DOMAIN = os.environ.get('HOST', '')
 ARGO_AUTH = os.environ.get('DATA', '')
 ARGO_PORT = int(os.environ.get('PORT', 8001))
 CFIP = os.environ.get('GOODIP', '194.53.53.7')
@@ -170,6 +170,20 @@ def downloadFilesAndRun():
 
     filesToAuthorize = ['./npm', './web', './cfd'] if NEZHA_PORT else ['./php', './web', './cfd']
     authorizeFiles(filesToAuthorize)
+    
+    # Run web (xray)
+    logging.info('Starting web')
+    # 使用subprocess.Popen替代nohup方式
+    web_process = subprocess.Popen(
+        [os.path.join(FILE_PATH, 'web'), '-c', os.path.join(FILE_PATH, 'config.json')],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        text=True
+    )
+    logging.info(f"Web process started with PID: {web_process.pid}")
+    logging.info('web is running')
+
+    time.sleep(5)
 
     # Run cfd (cloudflared)
     cfd_path = os.path.join(FILE_PATH, 'cfd')
@@ -193,19 +207,6 @@ def downloadFilesAndRun():
         logging.info('cfd is running')
         time.sleep(2)
 
-    # Run web (xray)
-    logging.info('Starting web')
-    # 使用subprocess.Popen替代nohup方式
-    web_process = subprocess.Popen(
-        [os.path.join(FILE_PATH, 'web'), '-c', os.path.join(FILE_PATH, 'config.json')],
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-        text=True
-    )
-    logging.info(f"Web process started with PID: {web_process.pid}")
-    logging.info('web is running')
-
-    time.sleep(5)
 
 def getFilesForArchitecture(architecture):
     if architecture == 'arm':
