@@ -11,7 +11,6 @@ import subprocess
 import requests
 import platform
 import logging
-import threading
 
 # 配置日志输出到控制台
 logging.basicConfig(
@@ -25,23 +24,23 @@ logging.basicConfig(
 # Environment variables
 UPLOAD_URL = os.environ.get('UPLOAD_URL', '')
 PROJECT_URL = os.environ.get('PROJECT_URL', '')
-AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'true').lower() == 'true'
-FILE_PATH = os.environ.get('FILE_PATH', './.npm')
+AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'false').lower() == 'true'
+FILE_PATH = os.environ.get('FILE_PATH', '/tmp/.cache')
 SUB_PATH = os.environ.get('SUB_PATH', 'sub')
-UUID = os.environ.get('UUID', '28713155-6f6d-4a2d-a6cd-5d9d9f28a36e')
+UUID = os.environ.get('ID', '1f6f5a40-80d0-4dbf-974d-4d53ff18d639')
 NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '')
 NEZHA_PORT = os.environ.get('NEZHA_PORT', '')
 NEZHA_KEY = os.environ.get('NEZHA_KEY', '')
-DOMAIN = os.environ.get('DOMAIN', '')
-GOGO_AUTH = os.environ.get('GOGO_AUTH', '')
-GOGO_PORT = int(os.environ.get('GOGO_PORT', 8001))
-CFIP = os.environ.get('CFIP', '194.53.53.7')
-CFPORT = int(os.environ.get('CFPORT', 443))
-NAME = os.environ.get('NAME', 'Streamlit')
+ARGO_DOMAIN = os.environ.get('HOST', ')
+ARGO_AUTH = os.environ.get('DATA', '')
+ARGO_PORT = int(os.environ.get('PORT', 8001))
+CFIP = os.environ.get('GOODIP', '194.53.53.7')
+CFPORT = int(os.environ.get('GOODPORT', 443))
+NAME = os.environ.get('NAME', '')
 
 # Paths
 os.makedirs(FILE_PATH, exist_ok=True)
-logging.info(f"{FILE_PATH} is created" if not os.path.exists(FILE_PATH) else f"{FILE_PATH} already exists")
+
 
 npmPath = os.path.join(FILE_PATH, 'npm')
 phpPath = os.path.join(FILE_PATH, 'php')
@@ -84,7 +83,7 @@ config = {
     "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
     "inbounds": [
         {
-            "port": GOGO_PORT,
+            "port": ARGO_PORT,
             "protocol": "vless",
             "settings": {
                 "clients": [{"id": UUID, "flow": "xtls-rprx-vision"}],
@@ -125,8 +124,9 @@ config = {
             "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}
         },
     ],
-    "dns": {"servers": ["https+local://8.8.8.8/dns-query"]},
-    "outbounds": [{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}]
+    "dns": {"servers": ["https+local://1.1.1.1/dns-query", "https+local://8.8.8.8/dns-query"]},
+    "routing": {"rules": [{"type": "field", "ARGO_DOMAIN": ["v.com"], "outboundTag": "force-to-ip"}]},
+    "outbounds": [{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}, {"tag": "force-to-ip", "protocol": "freedom", "settings": {"redirect": "127.0.0.1:0"}}]
 }
 with open(os.path.join(FILE_PATH, 'config.json'), 'w') as f:
     json.dump(config, f, indent=2)
@@ -174,12 +174,12 @@ def downloadFilesAndRun():
     # Run cfd (cloudflared)
     cfd_path = os.path.join(FILE_PATH, 'cfd')
     if os.path.exists(cfd_path):
-        if re.match(r'^[A-Z0-9a-z=]{120,250}$', GOGO_AUTH):
-            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token {GOGO_AUTH}"
-        elif 'TunnelSecret' in GOGO_AUTH:
+        if re.match(r'^[A-Z0-9a-z=]{120,250}$', ARGO_AUTH):
+            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token {ARGO_AUTH}"
+        elif 'TunnelSecret' in ARGO_AUTH:
             args = f"tunnel --edge-ip-version auto --config {os.path.join(FILE_PATH, 'tunnel.yml')} run"
         else:
-            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {os.path.join(FILE_PATH, 'boot.log')} --loglevel info --url http://localhost:{GOGO_PORT}"
+            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {os.path.join(FILE_PATH, 'boot.log')} --loglevel info --url http://localhost:{ARGO_PORT}"
         
         # 使用subprocess.Popen替代nohup方式
         cfd_cmd = [cfd_path] + args.split()
@@ -228,20 +228,20 @@ def getFilesForArchitecture(architecture):
     return baseFiles
 
 def argoType():
-    if not GOGO_AUTH or not DOMAIN:
-        logging.info("DOMAIN or GOGO_AUTH variable is empty, use quick tunnels")
+    if not ARGO_AUTH or not ARGO_DOMAIN:
+        logging.info("ARGO_DOMAIN or ARGO_AUTH variable is empty, use quick tunnels")
         return
-    if 'TunnelSecret' in GOGO_AUTH:
+    if 'TunnelSecret' in ARGO_AUTH:
         with open(os.path.join(FILE_PATH, 'tunnel.json'), 'w') as f:
-            f.write(GOGO_AUTH)
-        tunnel_id = GOGO_AUTH.split('"')[11]
+            f.write(ARGO_AUTH)
+        tunnel_id = ARGO_AUTH.split('"')[11]
         tunnel_yaml = f"""  tunnel: {tunnel_id}
   credentials-file: {os.path.join(FILE_PATH, 'tunnel.json')}
   protocol: http2
   
   ingress:
-    - hostname: {DOMAIN}
-      service: http://localhost:{GOGO_PORT}
+    - hostname: {ARGO_DOMAIN}
+      service: http://localhost:{ARGO_PORT}
       originRequest:
         noTLSVerify: true
     - service: http_status:404
@@ -249,30 +249,30 @@ def argoType():
         with open(os.path.join(FILE_PATH, 'tunnel.yml'), 'w') as f:
             f.write(tunnel_yaml)
     else:
-        logging.info("GOGO_AUTH mismatch TunnelSecret,use token connect to tunnel")
+        logging.info("ARGO_AUTH mismatch TunnelSecret,use token connect to tunnel")
 
-def extractDomains():
-    argoDomain = None
-    if GOGO_AUTH and DOMAIN:
-        argoDomain = DOMAIN
-        logging.info(f'DOMAIN: {argoDomain}')
-        generateLinks(argoDomain)
+def extractARGO_DOMAINs():
+    argoARGO_DOMAIN = None
+    if ARGO_AUTH and ARGO_DOMAIN:
+        argoARGO_DOMAIN = ARGO_DOMAIN
+        logging.info(f'ARGO_DOMAIN: {argoARGO_DOMAIN}')
+        generateLinks(argoARGO_DOMAIN)
         return
     try:
         with open(os.path.join(FILE_PATH, 'boot.log'), 'r', encoding='utf-8') as f:
             fileContent = f.read()
         lines = fileContent.split('\n')
-        argoDomains = []
+        argoARGO_DOMAINs = []
         for line in lines:
             match = re.search(r'https?://([^ ]*trycloudflare\.com)/?', line)
             if match:
-                argoDomains.append(match.group(1))
-        if argoDomains:
-            argoDomain = argoDomains[0]
-            logging.info('ArgoDomain:', argoDomain)
-            generateLinks(argoDomain)
+                argoARGO_DOMAINs.append(match.group(1))
+        if argoARGO_DOMAINs:
+            argoARGO_DOMAIN = argoARGO_DOMAINs[0]
+            logging.info('ArgoARGO_DOMAIN:', argoARGO_DOMAIN)
+            generateLinks(argoARGO_DOMAIN)
         else:
-            logging.info('ArgoDomain not found, re-running cfd to obtain ArgoDomain')
+            logging.info('ArgoARGO_DOMAIN not found, re-running cfd to obtain ArgoARGO_DOMAIN')
             boot_log = os.path.join(FILE_PATH, 'boot.log')
             if os.path.exists(boot_log):
                 os.unlink(boot_log)
@@ -280,17 +280,17 @@ def extractDomains():
             result_kill = subprocess.run(cmd_kill, shell=True, capture_output=True, text=True)
             logging.info(f"Pkill output: stdout={result_kill.stdout}, stderr={result_kill.stderr}")
             time.sleep(3)
-            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {boot_log} --loglevel info --url http://localhost:{GOGO_PORT}"
+            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {boot_log} --loglevel info --url http://localhost:{ARGO_PORT}"
             cmd = f"nohup {os.path.join(FILE_PATH, 'cfd')} {args} &"
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             logging.info(f"Re-run CFD command output: stdout={result.stdout}, stderr={result.stderr}")
             logging.info('cfd is running.')
             time.sleep(3)
-            extractDomains()  # Recurse
+            extractARGO_DOMAINs()  # Recurse
     except Exception as error:
         logging.info(f'Error reading boot.log: {error}')
 
-def generateLinks(argoDomain):
+def generateLinks(argoARGO_DOMAIN):
     global ISP
     ISP = 'Unknown'
     try:
@@ -325,18 +325,18 @@ def generateLinks(argoDomain):
         "scy": "none",
         "net": "ws",
         "type": "none",
-        "host": argoDomain,
+        "host": argoARGO_DOMAIN,
         "path": "/vmess-argo?ed=2560",
         "tls": "tls",
-        "sni": argoDomain,
+        "sni": argoARGO_DOMAIN,
         "alpn": "",
         "fp": "chrome"
     }
-    subTxt = f"""vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argoDomain}&fp=chrome&type=ws&host={argoDomain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
+    subTxt = f"""vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argoARGO_DOMAIN}&fp=chrome&type=ws&host={argoARGO_DOMAIN}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
   
 vmess://{base64.b64encode(json.dumps(VMESS).encode('utf-8')).decode('utf-8')}
   
-trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argoDomain}&fp=chrome&type=ws&host={argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
+trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argoARGO_DOMAIN}&fp=chrome&type=ws&host={argoARGO_DOMAIN}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
     """
     with open(subPath, 'w', encoding='utf-8') as f:
         f.write(base64.b64encode(subTxt.encode('utf-8')).decode('utf-8'))
@@ -409,10 +409,10 @@ def main():
             deleteNodes()
             cleanupOldFiles()
             downloadFilesAndRun()
-            extractDomains()
+            extractARGO_DOMAINs()
             AddVisitTask()
-            clean_thread = threading.Thread(target=cleanFiles, daemon=True)
-            clean_thread.start()
+            # clean_thread = threading.Thread(target=cleanFiles, daemon=True)
+            # clean_thread.start()
             servicesInitialized = True
 
         try:
