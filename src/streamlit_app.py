@@ -125,7 +125,7 @@ config = {
         },
     ],
     "dns": {"servers": ["https+local://1.1.1.1/dns-query", "https+local://8.8.8.8/dns-query"]},
-    "routing": {"rules": [{"type": "field", "ARGO_DOMAIN": ["v.com"], "outboundTag": "force-to-ip"}]},
+    "routing": {"rules": [{"type": "field", "domain": ["v.com"], "outboundTag": "force-to-ip"}]},
     "outbounds": [{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}, {"tag": "force-to-ip", "protocol": "freedom", "settings": {"redirect": "127.0.0.1:0"}}]
 }
 with open(os.path.join(FILE_PATH, 'config.json'), 'w') as f:
@@ -170,7 +170,7 @@ def downloadFilesAndRun():
 
     filesToAuthorize = ['./npm', './web', './cfd'] if NEZHA_PORT else ['./php', './web', './cfd']
     authorizeFiles(filesToAuthorize)
-    
+
     # Run web (xray)
     logging.info('Starting web')
     # 使用subprocess.Popen替代nohup方式
