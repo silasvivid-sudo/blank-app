@@ -11,14 +11,13 @@ import subprocess
 import requests
 import platform
 import logging
+import threading
 
-# 配置日志输出到控制台
+# 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 
 # Environment variables
@@ -40,395 +39,306 @@ NAME = os.environ.get('NAME', '')
 
 # Paths
 os.makedirs(FILE_PATH, exist_ok=True)
-
-
-npmPath = os.path.join(FILE_PATH, 'npm')
-phpPath = os.path.join(FILE_PATH, 'php')
 webPath = os.path.join(FILE_PATH, 'web')
 botPath = os.path.join(FILE_PATH, 'cfd')
 subPath = os.path.join(FILE_PATH, 'sub.txt')
 listPath = os.path.join(FILE_PATH, 'list.txt')
 bootLogPath = os.path.join(FILE_PATH, 'boot.log')
 configPath = os.path.join(FILE_PATH, 'config.json')
+npmPath = os.path.join(FILE_PATH, 'npm')
+phpPath = os.path.join(FILE_PATH, 'php')
 
-servicesInitialized = os.path.exists(subPath)
-
-def deleteNodes():
-    try:
-        if not UPLOAD_URL:
-            return
-        if not os.path.exists(subPath):
-            return
-        with open(subPath, 'r', encoding='utf-8') as f:
-            fileContent = f.read()
-        decoded = base64.b64decode(fileContent).decode('utf-8')
-        nodes = [line for line in decoded.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
-        if not nodes:
-            return
-        response = requests.post(f"{UPLOAD_URL}/api/delete-nodes", json={"nodes": nodes})
-        logging.info(f"Delete nodes response: {response.status_code} - {response.text}")
-    except Exception as e:
-        logging.info(f"Error in deleteNodes: {e}")
-
-def cleanupOldFiles():
-    pathsToDelete = ['web', 'cfd', 'npm', 'php', 'sub.txt', 'boot.log']
-    for file in pathsToDelete:
-        filePath = os.path.join(FILE_PATH, file)
-        if os.path.exists(filePath):
-            os.unlink(filePath)
-            logging.info(f"Cleaned up {filePath}")
-
-# Generate xray config
-config = {
-    "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
-    "inbounds": [
-        {
-            "port": ARGO_PORT,
-            "protocol": "vless",
-            "settings": {
-                "clients": [{"id": UUID, "flow": "xtls-rprx-vision"}],
-                "decryption": "none",
-                "fallbacks": [{"dest": 3001}, {"path": "/vless-argo", "dest": 3002}, {"path": "/vmess-argo", "dest": 3003}, {"path": "/trojan-argo", "dest": 3004}]
-            },
-            "streamSettings": {"network": "tcp"}
-        },
-        {
-            "port": 3001,
-            "listen": "127.0.0.1",
-            "protocol": "vless",
-            "settings": {"clients": [{"id": UUID}], "decryption": "none"},
-            "streamSettings": {"network": "tcp", "security": "none"}
-        },
-        {
-            "port": 3002,
-            "listen": "127.0.0.1",
-            "protocol": "vless",
-            "settings": {"clients": [{"id": UUID, "level": 0}], "decryption": "none"},
-            "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/vless-argo"}},
-            "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}
-        },
-        {
-            "port": 3003,
-            "listen": "127.0.0.1",
-            "protocol": "vmess",
-            "settings": {"clients": [{"id": UUID, "alterId": 0}]},
-            "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess-argo"}},
-            "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}
-        },
-        {
-            "port": 3004,
-            "listen": "127.0.0.1",
-            "protocol": "trojan",
-            "settings": {"clients": [{"password": UUID}]},
-            "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/trojan-argo"}},
-            "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}
-        },
-    ],
-    "dns": {"servers": ["https+local://1.1.1.1/dns-query", "https+local://8.8.8.8/dns-query"]},
-    "routing": {"rules": [{"type": "field", "domain": ["v.com"], "outboundTag": "force-to-ip"}]},
-    "outbounds": [{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}, {"tag": "force-to-ip", "protocol": "freedom", "settings": {"redirect": "127.0.0.1:0"}}]
-}
-with open(os.path.join(FILE_PATH, 'config.json'), 'w') as f:
-    json.dump(config, f, indent=2)
-
-def getSystemArchitecture():
-    arch = platform.machine().lower()
-    if 'arm' in arch or 'aarch64' in arch:
-        return 'arm'
-    return 'amd'
-
-def downloadFile(fileName, fileUrl):
-    file_path = os.path.join(FILE_PATH, fileName)
-    resp = requests.get(fileUrl, stream=True)
-    resp.raise_for_status()
-    with open(file_path, 'wb') as f:
-        for chunk in resp.iter_content(chunk_size=8192):
-            f.write(chunk)
-    logging.info(f"Download {fileName} successfully")
-    return fileName
-
-def downloadFilesAndRun():
-    architecture = getSystemArchitecture()
-    filesToDownload = getFilesForArchitecture(architecture)
-    if not filesToDownload:
-        logging.info("Can't find a file for the current architecture")
-        return
-    for fileInfo in filesToDownload:
-        try:
-            downloadFile(fileInfo['fileName'], fileInfo['fileUrl'])
-        except Exception as e:
-            logging.info(f"Error downloading {fileInfo['fileName']}: {e}")
-            return
-
-    # Authorize files
-    def authorizeFiles(filePaths):
-        for relativeFilePath in filePaths:
-            absoluteFilePath = os.path.join(FILE_PATH, relativeFilePath)
-            if os.path.exists(absoluteFilePath):
-                os.chmod(absoluteFilePath, 0o775)
-                logging.info(f"Empowerment success for {absoluteFilePath}: 775")
-
-    filesToAuthorize = ['./npm', './web', './cfd'] if NEZHA_PORT else ['./php', './web', './cfd']
-    authorizeFiles(filesToAuthorize)
-
-    # Run web (xray)
-    logging.info('Starting web')
-    # 使用subprocess.Popen替代nohup方式
-    web_process = subprocess.Popen(
-        [os.path.join(FILE_PATH, 'web'), '-c', os.path.join(FILE_PATH, 'config.json')],
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-        text=True
-    )
-    logging.info(f"Web process started with PID: {web_process.pid}")
-    logging.info('web is running')
-
-    time.sleep(5)
-
-    # Run cfd (cloudflared)
-    cfd_path = os.path.join(FILE_PATH, 'cfd')
-    if os.path.exists(cfd_path):
-        if re.match(r'^[A-Z0-9a-z=]{120,250}$', ARGO_AUTH):
-            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token {ARGO_AUTH}"
-        elif 'TunnelSecret' in ARGO_AUTH:
-            args = f"tunnel --edge-ip-version auto --config {os.path.join(FILE_PATH, 'tunnel.yml')} run"
-        else:
-            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {os.path.join(FILE_PATH, 'boot.log')} --loglevel info --url http://localhost:{ARGO_PORT}"
-        
-        # 使用subprocess.Popen替代nohup方式
-        cfd_cmd = [cfd_path] + args.split()
-        cfd_process = subprocess.Popen(
-            cfd_cmd,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            text=True
-        )
-        logging.info(f"CFD process started with PID: {cfd_process.pid}")
-        logging.info('cfd is running')
-        time.sleep(2)
-
-
-def getFilesForArchitecture(architecture):
-    if architecture == 'arm':
-        baseFiles = [
-            {"fileName": "web", "fileUrl": "https://arm64.ssss.nyc.mn/web"},
-            {"fileName": "cfd", "fileUrl": "https://arm64.ssss.nyc.mn/2go"}
-        ]
-    else:
-        baseFiles = [
-            {"fileName": "web", "fileUrl": "https://amd64.ssss.nyc.mn/web"},
-            {"fileName": "cfd", "fileUrl": "https://amd64.ssss.nyc.mn/2go"}
-        ]
-    if NEZHA_SERVER and NEZHA_KEY:
-        if NEZHA_PORT:
-            npmUrl = "https://arm64.ssss.nyc.mn/agent" if architecture == 'arm' else "https://amd64.ssss.nyc.mn/agent"
-            baseFiles.insert(0, {"fileName": "npm", "fileUrl": npmUrl})
-        else:
-            phpUrl = "https://arm64.ssss.nyc.mn/v1" if architecture == 'arm' else "https://amd64.ssss.nyc.mn/v1"
-            baseFiles.insert(0, {"fileName": "php", "fileUrl": phpUrl})
-    return baseFiles
-
-def argoType():
-    if not ARGO_AUTH or not ARGO_DOMAIN:
-        logging.info("ARGO_DOMAIN or ARGO_AUTH variable is empty, use quick tunnels")
-        return
-    if 'TunnelSecret' in ARGO_AUTH:
-        with open(os.path.join(FILE_PATH, 'tunnel.json'), 'w') as f:
-            f.write(ARGO_AUTH)
-        tunnel_id = ARGO_AUTH.split('"')[11]
-        tunnel_yaml = f"""  tunnel: {tunnel_id}
-  credentials-file: {os.path.join(FILE_PATH, 'tunnel.json')}
-  protocol: http2
-  
-  ingress:
-    - hostname: {ARGO_DOMAIN}
-      service: http://localhost:{ARGO_PORT}
-      originRequest:
-        noTLSVerify: true
-    - service: http_status:404
-  """
-        with open(os.path.join(FILE_PATH, 'tunnel.yml'), 'w') as f:
-            f.write(tunnel_yaml)
-    else:
-        logging.info("ARGO_AUTH mismatch TunnelSecret,use token connect to tunnel")
-
-def extractARGO_DOMAINs():
-    argoARGO_DOMAIN = None
-    if ARGO_AUTH and ARGO_DOMAIN:
-        argoARGO_DOMAIN = ARGO_DOMAIN
-        logging.info(f'ARGO_DOMAIN: {argoARGO_DOMAIN}')
-        generateLinks(argoARGO_DOMAIN)
-        return
-    try:
-        with open(os.path.join(FILE_PATH, 'boot.log'), 'r', encoding='utf-8') as f:
-            fileContent = f.read()
-        lines = fileContent.split('\n')
-        argoARGO_DOMAINs = []
-        for line in lines:
-            match = re.search(r'https?://([^ ]*trycloudflare\.com)/?', line)
-            if match:
-                argoARGO_DOMAINs.append(match.group(1))
-        if argoARGO_DOMAINs:
-            argoARGO_DOMAIN = argoARGO_DOMAINs[0]
-            logging.info('ArgoARGO_DOMAIN:', argoARGO_DOMAIN)
-            generateLinks(argoARGO_DOMAIN)
-        else:
-            logging.info('ArgoARGO_DOMAIN not found, re-running cfd to obtain ArgoARGO_DOMAIN')
-            boot_log = os.path.join(FILE_PATH, 'boot.log')
-            if os.path.exists(boot_log):
-                os.unlink(boot_log)
-            cmd_kill = 'pkill -f "[b]ot" > /dev/null 2>&1'
-            result_kill = subprocess.run(cmd_kill, shell=True, capture_output=True, text=True)
-            logging.info(f"Pkill output: stdout={result_kill.stdout}, stderr={result_kill.stderr}")
-            time.sleep(3)
-            args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {boot_log} --loglevel info --url http://localhost:{ARGO_PORT}"
-            cmd = f"nohup {os.path.join(FILE_PATH, 'cfd')} {args} &"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            logging.info(f"Re-run CFD command output: stdout={result.stdout}, stderr={result.stderr}")
-            logging.info('cfd is running.')
-            time.sleep(3)
-            extractARGO_DOMAINs()  # Recurse
-    except Exception as error:
-        logging.info(f'Error reading boot.log: {error}')
-
-def generateLinks(argoARGO_DOMAIN):
-    global ISP
-    ISP = 'Unknown'
-    try:
-        resp = requests.get('https://speed.cloudflare.com/meta', timeout=5, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
-        logging.info(f"Speed.cloudflare meta response: {resp.status_code} - {resp.text[:200]}...")  # logging.info partial response
-        data = resp.json()
-        if data.get('country') and data.get('asOrganization'):
-            ISP = f"{data['country']}-{data['asOrganization']}".replace(' ', '_')
-        else:
-            ISP = data.get('country') or data.get('asOrganization') or 'CF-Node'
-        logging.info(f"ISP from API: {ISP}")
-    except Exception as e:
-        logging.info(f"Error fetching meta via requests: {e}")
-        try:
-            cmd_curl = 'curl -s https://speed.cloudflare.com/meta | awk -F\\" \'{logging.info $26"-"$18}\' | sed -e \'s/ /_/g\''
-            metaInfo = subprocess.check_output(cmd_curl, shell=True, timeout=5).decode('utf-8').strip()
-            logging.info(f"Curl command output: {metaInfo}")
-            ISP = metaInfo or 'CF-Node'
-        except Exception as execErr:
-            logging.info(f"Error in curl: {execErr}")
-            ISP = os.environ.get('ISP_NAME', f"{NAME}-Node")
-    time.sleep(2)
-    VMESS = {
-        "v": "2",
-        "ps": f"{NAME}-{ISP}",
-        "add": CFIP,
-        "port": CFPORT,
-        "id": UUID,
-        "aid": "0",
-        "scy": "none",
-        "net": "ws",
-        "type": "none",
-        "host": argoARGO_DOMAIN,
-        "path": "/vmess-argo?ed=2560",
-        "tls": "tls",
-        "sni": argoARGO_DOMAIN,
-        "alpn": "",
-        "fp": "chrome"
-    }
-    subTxt = f"""vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argoARGO_DOMAIN}&fp=chrome&type=ws&host={argoARGO_DOMAIN}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
-  
-vmess://{base64.b64encode(json.dumps(VMESS).encode('utf-8')).decode('utf-8')}
-  
-trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argoARGO_DOMAIN}&fp=chrome&type=ws&host={argoARGO_DOMAIN}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
-    """
-    with open(subPath, 'w', encoding='utf-8') as f:
-        f.write(base64.b64encode(subTxt.encode('utf-8')).decode('utf-8'))
-    logging.info(f"{FILE_PATH}/sub.txt saved successfully with ISP: {ISP}")
-    uplodNodes()
-
-def uplodNodes():
-    if UPLOAD_URL and PROJECT_URL:
-        subscriptionUrl = f"{PROJECT_URL}/{SUB_PATH}"
-        jsonData = {"subscription": [subscriptionUrl]}
-        try:
-            resp = requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json=jsonData)
-            logging.info(f"Upload subscription response: {resp.status_code} - {resp.text}")
-            if resp.status_code == 200:
-                logging.info('Subscription uploaded successfully')
-        except Exception as error:
-            logging.info(f"Upload error: {error}")
-            if hasattr(error, 'response') and error.response and error.response.status_code == 400:
-                logging.info("Subscription already exists")
-    elif UPLOAD_URL:
-        if not os.path.exists(listPath):
-            return
-        with open(listPath, 'r', encoding='utf-8') as f:
-            content = f.read()
-        nodes = [line for line in content.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
-        if not nodes:
-            return
-        try:
-            resp = requests.post(f"{UPLOAD_URL}/api/add-nodes", json={"nodes": nodes})
-            logging.info(f"Upload nodes response: {resp.status_code} - {resp.text}")
-            if resp.status_code == 200:
-                logging.info('Nodes uploaded successfully')
-        except Exception as error:
-            logging.info(f"Upload nodes error: {error}")
-    else:
-        logging.info('Skipping upload nodes')
-
+# ====================== cleanFiles：90秒后清理 ======================
 def cleanFiles():
     time.sleep(90)
-    filesToDelete = [bootLogPath, configPath, webPath, botPath, phpPath, npmPath]
-    if NEZHA_PORT:
+    filesToDelete = [bootLogPath, configPath, webPath, botPath]
+    if NEZHA_PORT and os.path.exists(npmPath):
         filesToDelete.append(npmPath)
-    elif NEZHA_SERVER and NEZHA_KEY:
+    elif NEZHA_SERVER and NEZHA_KEY and os.path.exists(phpPath):
         filesToDelete.append(phpPath)
     cmd = f"rm -rf {' '.join(filesToDelete)}"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    logging.info(f"Clean files output: stdout={result.stdout}, stderr={result.stderr}")
+    logging.info(f"Clean files: {result.stdout} {result.stderr}")
     os.system('clear')
     logging.info('App is running')
     logging.info('Thank you for using this script, enjoy!')
 
-def AddVisitTask():
-    if not AUTO_ACCESS or not PROJECT_URL:
-        logging.info("Skipping adding automatic access task")
+# ====================== 其他函数（同 tmp.py 逻辑） ======================
+
+def deleteNodes():
+    if not UPLOAD_URL or not os.path.exists(subPath):
         return
     try:
-        resp = requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL})
-        logging.info(f"Add visit task response: {resp.status_code} - {resp.text}")
-        logging.info("automatic access task added successfully")
-    except Exception as error:
-        logging.info(f"添加URL失败: {error}")
+        with open(subPath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        decoded = base64.b64decode(content).decode('utf-8')
+        nodes = [line for line in decoded.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
+        if nodes:
+            requests.post(f"{UPLOAD_URL}/api/delete-nodes", json={"nodes": nodes})
+    except Exception as e:
+        logging.info(f"deleteNodes error: {e}")
+
+def cleanupOldFiles():
+    paths = ['web', 'cfd', 'npm', 'php', 'sub.txt', 'boot.log']
+    for name in paths:
+        fp = os.path.join(FILE_PATH, name)
+        if os.path.exists(fp):
+            try: os.unlink(fp); logging.info(f"Cleaned {fp}")
+            except: pass
+
+# 生成 xray 配置
+config = {
+    "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
+    "inbounds": [
+        {
+            "port": ARGO_PORT, "protocol": "vless",
+            "settings": {"clients": [{"id": UUID, "flow": "xtls-rprx-vision"}], "decryption": "none",
+                         "fallbacks": [{"dest": 3001}, {"path": "/vless-argo", "dest": 3002},
+                                       {"path": "/vmess-argo", "dest": 3003}, {"path": "/trojan-argo", "dest": 3004}]},
+            "streamSettings": {"network": "tcp"}
+        },
+        {"port": 3001, "listen": "127.0.0.1", "protocol": "vless", "settings": {"clients": [{"id": UUID}], "decryption": "none"},
+         "streamSettings": {"network": "tcp", "security": "none"}},
+        {"port": 3002, "listen": "127.0.0.1", "protocol": "vless", "settings": {"clients": [{"id": UUID, "level": 0}], "decryption": "none"},
+         "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/vless-argo"}},
+         "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}},
+        {"port": 3003, "listen": "127.0.0.1", "protocol": "vmess", "settings": {"clients": [{"id": UUID, "alterId": 0}]},
+         "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess-argo"}},
+         "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}},
+        {"port": 3004, "listen": "127.0.0.1", "protocol": "trojan", "settings": {"clients": [{"password": UUID}]},
+         "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/trojan-argo"}},
+         "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}},
+    ],
+    "dns": {"servers": ["https+local://1.1.1.1/dns-query", "https+local://8.8.8.8/dns-query"]},
+    "routing": {"rules": [{"type": "field", "domain": ["v.com"], "outboundTag": "force-to-ip"}]},
+    "outbounds": [
+        {"protocol": "freedom", "tag": "direct"},
+        {"protocol": "blackhole", "tag": "block"},
+        {"tag": "force-to-ip", "protocol": "freedom", "settings": {"redirect": "127.0.0.1:0"}}
+    ]
+}
+with open(configPath, 'w') as f:
+    json.dump(config, f, indent=2)
+
+def getSystemArchitecture():
+    return 'arm' if 'arm' in platform.machine().lower() or 'aarch64' in platform.machine().lower() else 'amd'
+
+def downloadFile(name, url):
+    path = os.path.join(FILE_PATH, name)
+    r = requests.get(url, stream=True)
+    r.raise_for_status()
+    with open(path, 'wb') as f:
+        for c in r.iter_content(8192): f.write(c)
+    os.chmod(path, 0o775)
+    logging.info(f"Downloaded {name}")
+
+def downloadFilesAndRun():
+    arch = getSystemArchitecture()
+    files = [
+        {"fileName": "web", "fileUrl": f"https://{arch}64.ssss.nyc.mn/web"},
+        {"fileName": "cfd", "fileUrl": f"https://{arch}64.ssss.nyc.mn/2go"}
+    ]
+    if NEZHA_SERVER and NEZHA_KEY:
+        agent = "agent" if NEZHA_PORT else "v1"
+        files.insert(0, {"fileName": "npm" if NEZHA_PORT else "php", "fileUrl": f"https://{arch}64.ssss.nyc.mn/{agent}"})
+
+    for f in files:
+        try: downloadFile(f['fileName'], f['fileUrl'])
+        except Exception as e: logging.info(f"Download failed {f['fileName']}: {e}"); return
+
+    subprocess.Popen([webPath, '-c', configPath], stdout=sys.stdout, stderr=sys.stderr, text=True)
+    logging.info("xray started")
+    time.sleep(5)
+
+    cfd_cmd = [botPath]
+    if re.match(r'^[A-Z0-9a-z=]{120,250}$', ARGO_AUTH):
+        cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", "--protocol", "http2", "run", "--token", ARGO_AUTH]
+    elif 'TunnelSecret' in ARGO_AUTH:
+        cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--config", os.path.join(FILE_PATH, 'tunnel.yml'), "run"]
+    else:
+        cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", "--protocol", "http2",
+                    "--logfile", bootLogPath, "--loglevel", "info", "--url", f"http://localhost:{ARGO_PORT}"]
+    subprocess.Popen(cfd_cmd, stdout=sys.stdout, stderr=sys.stderr, text=True)
+    logging.info("cloudflared started")
+    time.sleep(2)
+
+def argoType():
+    if not ARGO_AUTH or not ARGO_DOMAIN: return
+    if 'TunnelSecret' in ARGO_AUTH:
+        with open(os.path.join(FILE_PATH, 'tunnel.json'), 'w') as f: f.write(ARGO_AUTH)
+        tunnel_id = ARGO_AUTH.split('"')[11]
+        yaml_content = f"""tunnel: {tunnel_id}
+credentials-file: {os.path.join(FILE_PATH, 'tunnel.json')}
+protocol: http2
+ingress:
+  - hostname: {ARGO_DOMAIN}
+    service: http://localhost:{ARGO_PORT}
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404
+"""
+        with open(os.path.join(FILE_PATH, 'tunnel.yml'), 'w') as f: f.write(yaml_content)
+
+def extractARGO_DOMAINs():
+    if ARGO_AUTH and ARGO_DOMAIN:
+        generateLinks(ARGO_DOMAIN)
+        return
+    try:
+        with open(bootLogPath, 'r', encoding='utf-8') as f:
+            lines = f.read().split('\n')
+        domains = [m.group(1) for line in lines if (m := re.search(r'https?://([^ ]*trycloudflare\.com)', line))]
+        if domains:
+            generateLinks(domains[0])
+        else:
+            raise ValueError("No domain")
+    except:
+        if os.path.exists(bootLogPath): os.unlink(bootLogPath)
+        subprocess.run('pkill -f "[b]ot"', shell=True)
+        time.sleep(3)
+        cmd = f"nohup {botPath} tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {bootLogPath} --loglevel info --url http://localhost:{ARGO_PORT} &"
+        subprocess.run(cmd, shell=True)
+        time.sleep(3)
+        extractARGO_DOMAINs()
+
+def generateLinks(argo_domain):
+    ISP = 'Unknown'
+    try:
+        data = requests.get('https://speed.cloudflare.com/meta', timeout=5).json()
+        ISP = f"{data.get('country','')}-{data.get('asOrganization','')}".replace(' ', '_') or 'CF-Node'
+    except:
+        try:
+            ISP = subprocess.check_output(
+                'curl -s https://speed.cloudflare.com/meta | awk -F\\" \'{print $26"-"$18}\' | sed -e \'s/ /_/g\'',
+                shell=True, timeout=5
+            ).decode().strip() or 'CF-Node'
+        except:
+            ISP = f"{NAME}-Node"
+
+    VMESS = {
+        "v": "2", "ps": f"{NAME}-{ISP}", "add": CFIP, "port": CFPORT, "id": UUID,
+        "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain,
+        "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"
+    }
+    raw = f"""vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
+
+vmess://{base64.b64encode(json.dumps(VMESS).encode()).decode()}
+
+trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
+"""
+    b64_content = base64.b64encode(raw.encode('utf-8')).decode('utf-8')
+    with open(subPath, 'w', encoding='utf-8') as f:
+        f.write(b64_content)
+    logging.info(f"{subPath} saved successfully (ISP: {ISP})")
+    uplodNodes()
+
+def uplodNodes():
+    if UPLOAD_URL and PROJECT_URL:
+        url = f"{PROJECT_URL}/{SUB_PATH}"
+        try:
+            requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json={"subscription": [url]})
+            logging.info("Subscription URL uploaded")
+        except Exception as e:
+            logging.info(f"Upload sub URL error: {e}")
+    elif UPLOAD_URL and os.path.exists(listPath):
+        with open(listPath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        nodes = [line for line in content.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
+        if nodes:
+            try:
+                requests.post(f"{UPLOAD_URL}/api/add-nodes", json={"nodes": nodes})
+                logging.info("Nodes uploaded")
+            except Exception as e:
+                logging.info(f"Upload nodes error: {e}")
+
+def AddVisitTask():
+    if AUTO_ACCESS and PROJECT_URL:
+        try:
+            requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL})
+        except: pass
+
+# ====================== Streamlit 界面（关键修复） ======================
+
+def check_id(user_input: str) -> bool:
+    return user_input.strip() == UUID.strip()
+
+def read_b64_subscription() -> str:
+    if not os.path.exists(subPath):
+        return ""
+    try:
+        with open(subPath, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except:
+        return ""
 
 def main():
-    logging.info("开始运行...")
-    global servicesInitialized
-    try:
-        if not servicesInitialized:
-            argoType()
-            logging.info('初始化服务...')
-            deleteNodes()
-            cleanupOldFiles()
-            downloadFilesAndRun()
-            extractARGO_DOMAINs()
-            AddVisitTask()
-            # clean_thread = threading.Thread(target=cleanFiles, daemon=True)
-            # clean_thread.start()
-            servicesInitialized = True
+    st.set_page_config(page_title="订阅查看器", layout="centered")
+    st.title("订阅信息查看器")
+    st.markdown("---")
 
-        try:
-            logging.info("读取订阅文件:")
-            if os.path.exists(subPath):
-                with open(subPath, 'r', encoding='utf-8') as f:
-                    subContent = f.read()
-                    st.write(subContent)
-            else:
-                st.write("订阅文件不存在")
-        except Exception as err:
-            (f"读取订阅文件出错: {err}")
+    if "id_verified" not in st.session_state:
+        st.session_state.id_verified = False
 
-    except Exception as err:
-        logging.info(f"error: {err}", exec_info=True)
+    # ========== 1. sub.txt 不存在 → 自动初始化（不显示输入框） ==========
+    if not os.path.exists(subPath):
+        with st.spinner("正在自动初始化服务，请稍候..."):
+            try:
+                argoType()
+                deleteNodes()
+                cleanupOldFiles()
+                downloadFilesAndRun()
+                extractARGO_DOMAINs()
+                AddVisitTask()
+
+                clean_thread = threading.Thread(target=cleanFiles, daemon=True)
+                clean_thread.start()
+
+                st.success("初始化完成！订阅已生成")
+                st.info("页面刷新后请输入 UUID 查看")
+                time.sleep(2)
+                st.rerun()
+            except Exception as e:
+                st.error(f"初始化失败: {e}")
+                logging.error(f"Auto init error: {e}", exc_info=True)
+        return
+
+    # ========== 2. sub.txt 存在 → 显示输入框 ==========
+    if not st.session_state.id_verified:
+        user_id = st.text_input(
+            "请输入 UUID 以查看订阅",
+            placeholder="例如: 1f6f5a40-80d0-4dbf-974d-4d53ff18d639",
+            type="password",
+            key="id_input"
+        )
+        if user_id and check_id(user_id):
+            st.session_state.id_verified = True
+            st.success("验证成功！")
+            st.rerun()
+        elif user_id:
+            st.error("UUID 错误")
+        else:
+            st.info("请输入正确的 UUID 查看 base64 订阅")
+        return
+
+    # ========== 3. 显示 base64 内容（关键：不使用 st.code） ==========
+    b64_content = read_b64_subscription()
+    if not b64_content:
+        st.error("订阅内容为空")
+        return
+
+    st.subheader("订阅内容（Base64）")
+
+    # 方式1：文本框（可复制）
+    st.text_area("点击全选 → 复制", b64_content, height=150, key="b64_text")
+
+    # 方式2：下载按钮（最推荐）
+    st.download_button(
+        label="下载 sub.txt（推荐）",
+        data=b64_content,
+        file_name="sub.txt",
+        mime="text/plain"
+    )
+
+    st.success("**已复制或下载！直接在 v2rayN → 订阅 → 从剪贴板/文件导入**")
 
 if __name__ == "__main__":
     main()
