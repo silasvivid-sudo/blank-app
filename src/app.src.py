@@ -15,20 +15,21 @@ import threading
 import random
 import string
 
-# Configure logging (only key info to console)
+# ====================== 配置 & 日志 ======================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-# Environment variables
+# 环境变量
 UPLOAD_URL = os.environ.get('UPLOAD_URL', '')
 PROJECT_URL = os.environ.get('PROJECT_URL', '')
 AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'false').lower() == 'true'
 FILE_PATH = os.environ.get('FILE_PATH', '/tmp/.cache')
 SUB_PATH = os.environ.get('SUB_PATH', 'sub')
 UUID = os.environ.get('ID', '1f6f5a40-80d0-4dbf-974d-4d53ff18d639')
+PASSWD = os.environ.get('PASSWD', 'admin123')
 NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '')
 NEZHA_PORT = os.environ.get('NEZHA_PORT', '')
 NEZHA_KEY = os.environ.get('NEZHA_KEY', '')
@@ -39,179 +40,165 @@ CFIP = os.environ.get('GOODIP', '194.53.53.7')
 CFPORT = int(os.environ.get('GOODPORT', 443))
 NAME = os.environ.get('NAME', '')
 
-# Paths
 os.makedirs(FILE_PATH, exist_ok=True)
 
-# Global paths (generated dynamically in main)
-web_file_name = None
-bot_file_name = None
-webPath = None
-botPath = None
+# 路径
 subPath = os.path.join(FILE_PATH, 'sub.txt')
-listPath = os.path.join(FILE_PATH, 'list.txt')
 bootLogPath = os.path.join(FILE_PATH, 'boot.log')
 configPath = os.path.join(FILE_PATH, 'config.json')
 npmPath = os.path.join(FILE_PATH, 'npm')
 phpPath = os.path.join(FILE_PATH, 'php')
+lockFile = os.path.join(FILE_PATH, 'service.lock')  # 永久保留
 
-# ====================== Random filename generation ======================
+
+# ====================== 工具函数 ======================
 def generate_random_name(length=5):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
-# ====================== Clean files after 90 seconds ======================
-def cleanFiles():
-    time.sleep(90)
-    filesToDelete = [bootLogPath, configPath, subPath, listPath]
-    for path in [webPath, botPath, npmPath, phpPath]:
-        if path and os.path.exists(path):
-            filesToDelete.append(path)
-    for ext in ['tunnel.json', 'tunnel.yml']:
-        f = os.path.join(FILE_PATH, ext)
-        if os.path.exists(f):
-            filesToDelete.append(f)
 
-    if filesToDelete:
-        cmd = f"rm -f {' '.join(filesToDelete)}"
-        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        logging.info("Temporary files cleaned")
+def check_passwd(user_input: str) -> bool:
+    return user_input.strip() == PASSWD.strip()
 
-    logging.info('App is running')
-    logging.info('Thank you for using this script, enjoy!')
 
-# ====================== Other functions ======================
-def deleteNodes():
-    if not UPLOAD_URL or not os.path.exists(subPath):
-        return
+# ====================== 永久内存缓存订阅 =======================
+@st.cache_data(show_spinner=False)
+def get_global_subscription(_domain: str) -> str:
+    logging.info(f"Generating subscription for domain: {_domain}")
+    ISP = 'Unknown'
     try:
-        with open(subPath, 'r', encoding='utf-8') as f:
-            content = f.read()
-        decoded = base64.b64decode(content).decode('utf-8')
-        nodes = [line for line in decoded.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
-        if nodes:
-            requests.post(f"{UPLOAD_URL}/api/delete-nodes", json={"nodes": nodes}, timeout=10)
-    except Exception as e:
-        logging.info(f"deleteNodes error: {e}")
+        meta = requests.get('https://speed.cloudflare.com/meta', timeout=5).json()
+        ISP = f"{meta.get('country','')}-{meta.get('asOrganization','')}".replace(' ', '_') or 'CF-Node'
+    except:
+        ISP = f"{NAME}-Node" if NAME else 'CF-Node'
 
-def cleanupOldFiles():
-    safe_keep = {web_file_name, bot_file_name, 'sub.txt', 'boot.log', 'config.json', 'tunnel.json', 'tunnel.yml', 'npm', 'php'}
-    for name in os.listdir(FILE_PATH):
-        if name in safe_keep:
-            continue
-        fp = os.path.join(FILE_PATH, name)
-        if os.path.isfile(fp) and os.access(fp, os.X_OK):
+    VMESS = {
+        "v": "2", "ps": f"{NAME}-{ISP}", "add": CFIP, "port": CFPORT, "id": UUID,
+        "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": _domain,
+        "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": _domain, "alpn": "", "fp": "chrome"
+    }
+    raw = f"""vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={_domain}&fp=chrome&type=ws&host={_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
+
+vmess://{base64.b64encode(json.dumps(VMESS).encode()).decode()}
+
+trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={_domain}&fp=chrome&type=ws&host={_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
+"""
+    b64_content = base64.b64encode(raw.encode('utf-8')).decode('utf-8')
+
+    # 临时写入 sub.txt（仅用于上传）
+    try:
+        with open(subPath, 'w', encoding='utf-8') as f:
+            f.write(b64_content)
+        if UPLOAD_URL and PROJECT_URL:
             try:
-                os.unlink(fp)
-                logging.info(f"Cleaned old executable: {name}")
+                requests.post(
+                    f"{UPLOAD_URL}/api/add-subscriptions",
+                    json={"subscription": [f"{PROJECT_URL}/{SUB_PATH}"]},
+                    timeout=10
+                )
+                logging.info("Subscription URL uploaded")
+            except Exception as e:
+                logging.warning(f"Upload failed: {e}")
+    except Exception as e:
+        logging.warning(f"Failed to write sub.txt: {e}")
+
+    return b64_content
+
+
+# ====================== 全局服务启动（只看 lockFile）======================
+@st.cache_resource(show_spinner="Starting global proxy service...")
+def start_proxy_service_once():
+    # === 关键：只看 lockFile 是否存在 ===
+    if os.path.exists(lockFile):
+        logging.info("Service already initialized (lockFile exists)")
+        domain = ARGO_DOMAIN
+        if not domain and os.path.exists(bootLogPath):
+            try:
+                with open(bootLogPath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    if m := re.search(r'https?://([^ ]*trycloudflare\.com)', content):
+                        domain = m.group(1)
             except:
                 pass
+        return domain or "unknown.trycloudflare.com"
 
-# Generate xray config
-config = {
-    "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
-    "inbounds": [
-        {
-            "port": ARGO_PORT, "protocol": "vless",
-            "settings": {"clients": [{"id": UUID, "flow": "xtls-rprx-vision"}], "decryption": "none",
-                         "fallbacks": [{"dest": 3001}, {"path": "/vless-argo", "dest": 3002},
-                                       {"path": "/vmess-argo", "dest": 3003}, {"path": "/trojan-argo", "dest": 3004}]},
-            "streamSettings": {"network": "tcp"}
-        },
-        {"port": 3001, "listen": "127.0.0.1", "protocol": "vless", "settings": {"clients": [{"id": UUID}], "decryption": "none"},
-         "streamSettings": {"network": "tcp", "security": "none"}},
-        {"port": 3002, "listen": "127.0.0.1", "protocol": "vless", "settings": {"clients": [{"id": UUID, "level": 0}], "decryption": "none"},
-         "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/vless-argo"}},
-         "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}},
-        {"port": 3003, "listen": "127.0.0.1", "protocol": "vmess", "settings": {"clients": [{"id": UUID, "alterId": 0}]},
-         "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess-argo"}},
-         "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}},
-        {"port": 3004, "listen": "127.0.0.1", "protocol": "trojan", "settings": {"clients": [{"password": UUID}]},
-         "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/trojan-argo"}},
-         "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}},
-    ],
-    "dns": {"servers": ["https+local://1.1.1.1/dns-query", "https+local://8.8.8.8/dns-query"]},
-    "routing": {"rules": [{"type": "field", "domain": ["v.com"], "outboundTag": "force-to-ip"}]},
-    "outbounds": [
-        {"protocol": "freedom", "tag": "direct"},
-        {"protocol": "blackhole", "tag": "block"},
-        {"tag": "force-to-ip", "protocol": "freedom", "settings": {"redirect": "127.0.0.1:0"}}
-    ]
-}
-with open(configPath, 'w') as f:
-    json.dump(config, f, indent=2)
+    # === 初始化流程 ===
+    web_file_name = generate_random_name(5)
+    bot_file_name = generate_random_name(5)
+    webPath = os.path.join(FILE_PATH, web_file_name)
+    botPath = os.path.join(FILE_PATH, bot_file_name)
 
-def getSystemArchitecture():
-    return 'arm' if 'arm' in platform.machine().lower() or 'aarch64' in platform.machine().lower() else 'amd'
+    # 1. 生成 xray 配置
+    config = {
+        "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
+        "inbounds": [
+            {
+                "port": ARGO_PORT, "protocol": "vless",
+                "settings": {"clients": [{"id": UUID, "flow": "xtls-rprx-vision"}], "decryption": "none",
+                             "fallbacks": [{"dest": 3001}, {"path": "/vless-argo", "dest": 3002},
+                                           {"path": "/vmess-argo", "dest": 3003}, {"path": "/trojan-argo", "dest": 3004}]},
+                "streamSettings": {"network": "tcp"}
+            },
+            {"port": 3001, "listen": "127.0.0.1", "protocol": "vless", "settings": {"clients": [{"id": UUID}], "decryption": "none"},
+             "streamSettings": {"network": "tcp", "security": "none"}},
+            {"port": 3002, "listen": "127.0.0.1", "protocol": "vless", "settings": {"clients": [{"id": UUID, "level": 0}], "decryption": "none"},
+             "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/vless-argo"}},
+             "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}},
+            {"port": 3003, "listen": "127.0.0.1", "protocol": "vmess", "settings": {"clients": [{"id": UUID, "alterId": 0}]},
+             "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess-argo"}},
+             "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}},
+            {"port": 3004, "listen": "127.0.0.1", "protocol": "trojan", "settings": {"clients": [{"password": UUID}]},
+             "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/trojan-argo"}},
+             "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}},
+        ],
+        "dns": {"servers": ["https+local://1.1.1.1/dns-query", "https+local://8.8.8.8/dns-query"]},
+        "routing": {"rules": [{"type": "field", "domain": ["v.com"], "outboundTag": "force-to-ip"}]},
+        "outbounds": [
+            {"protocol": "freedom", "tag": "direct"},
+            {"protocol": "blackhole", "tag": "block"},
+            {"tag": "force-to-ip", "protocol": "freedom", "settings": {"redirect": "127.0.0.1:0"}}
+        ]
+    }
+    with open(configPath, 'w') as f:
+        json.dump(config, f, indent=2)
 
-def downloadFile(name, url):
-    path = os.path.join(FILE_PATH, name)
-    try:
-        r = requests.get(url, stream=True, timeout=15)
-        r.raise_for_status()
-        with open(path, 'wb') as f:
-            for c in r.iter_content(8192):
-                f.write(c)
-        os.chmod(path, 0o775)
-        logging.info(f"Downloaded {name}")
-    except Exception as e:
-        logging.info(f"Download failed {name}: {e}")
-        raise
-
-def downloadFilesAndRun():
-    global webPath, botPath, npmPath, phpPath
-    arch = getSystemArchitecture()
+    # 2. 下载文件
+    arch = 'arm' if 'arm' in platform.machine().lower() or 'aarch64' in platform.machine().lower() else 'amd'
     files = [
         {"fileName": web_file_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/web"},
         {"fileName": bot_file_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/2go"}
     ]
-    agent_name = None
     if NEZHA_SERVER and NEZHA_KEY:
         agent = "agent" if NEZHA_PORT else "v1"
         agent_name = "npm" if NEZHA_PORT else "php"
         agent_path = os.path.join(FILE_PATH, agent_name)
         if agent_name == "npm":
-            npmPath = agent_path
+            globals()['npmPath'] = agent_path
         else:
-            phpPath = agent_path
+            globals()['phpPath'] = agent_path
         files.insert(0, {"fileName": agent_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/{agent}"})
 
     for f in files:
-        downloadFile(f['fileName'], f['fileUrl'])
+        path = os.path.join(FILE_PATH, f['fileName'])
+        r = requests.get(f['fileUrl'], stream=True, timeout=15)
+        r.raise_for_status()
+        with open(path, 'wb') as wf:
+            for c in r.iter_content(8192):
+                wf.write(c)
+        os.chmod(path, 0o775)
 
-    # Silent start xray
-    subprocess.Popen(
-        [webPath, '-c', configPath],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    logging.info(f"{web_file_name} started")
+    # 3. 启动 xray
+    subprocess.Popen([webPath, '-c', configPath], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(5)
 
+    # 4. 启动 cloudflared
     cfd_cmd = [botPath]
     if re.match(r'^[A-Z0-9a-z=]{120,250}$', ARGO_AUTH):
         cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", "--protocol", "http2", "run", "--token", ARGO_AUTH]
     elif 'TunnelSecret' in ARGO_AUTH:
-        cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--config", os.path.join(FILE_PATH, 'tunnel.yml'), "run"]
-    else:
-        cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", "--protocol", "http2",
-                    "--logfile", bootLogPath, "--loglevel", "info", "--url", f"http://localhost:{ARGO_PORT}"]
-
-    # Silent start cloudflared
-    subprocess.Popen(
-        cfd_cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    logging.info(f"{bot_file_name} started")
-    time.sleep(2)
-
-def argoType():
-    if not ARGO_AUTH or not ARGO_DOMAIN:
-        return
-    if 'TunnelSecret' in ARGO_AUTH:
         with open(os.path.join(FILE_PATH, 'tunnel.json'), 'w') as f:
             f.write(ARGO_AUTH)
         try:
-            tunnel_id = ARGO_AUTH.split('"')[11]
+            tunnel_id = json.loads(ARGO_AUTH).get("TunnelID") or ARGO_AUTH.split('"')[11]
         except:
             tunnel_id = "unknown"
         yaml_content = f"""tunnel: {tunnel_id}
@@ -226,171 +213,133 @@ ingress:
 """
         with open(os.path.join(FILE_PATH, 'tunnel.yml'), 'w') as f:
             f.write(yaml_content)
+        cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--config", os.path.join(FILE_PATH, 'tunnel.yml'), "run"]
+    else:
+        cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", "--protocol", "http2",
+                    "--logfile", bootLogPath, "--loglevel", "info", "--url", f"http://localhost:{ARGO_PORT}"]
 
-def extractARGO_DOMAINs():
-    if ARGO_AUTH and ARGO_DOMAIN:
-        generateLinks(ARGO_DOMAIN)
-        return
-    try:
-        with open(bootLogPath, 'r', encoding='utf-8') as f:
-            lines = f.read().split('\n')
-        domains = [m.group(1) for line in lines if (m := re.search(r'https?://([^ ]*trycloudflare\.com)', line))]
-        if domains:
-            generateLinks(domains[0])
-        else:
-            raise ValueError("No domain")
-    except:
-        if os.path.exists(bootLogPath):
-            os.unlink(bootLogPath)
-        subprocess.run('pkill -f "[b]ot"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(3)
-        cmd = f"nohup {botPath} tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {bootLogPath} --loglevel info --url http://localhost:{ARGO_PORT} &"
-        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(3)
-        extractARGO_DOMAINs()
+    subprocess.Popen(cfd_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(3)
 
-def generateLinks(argo_domain):
-    ISP = 'Unknown'
-    try:
-        data = requests.get('https://speed.cloudflare.com/meta', timeout=5).json()
-        ISP = f"{data.get('country','')}-{data.get('asOrganization','')}".replace(' ', '_') or 'CF-Node'
-    except:
-        try:
-            ISP = subprocess.check_output(
-                'curl -s https://speed.cloudflare.com/meta | awk -F\\" \'{print $26"-"$18}\' | sed -e \'s/ /_/g\'',
-                shell=True, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            ).decode().strip() or 'CF-Node'
-        except:
-            ISP = f"{NAME}-Node"
+    # 5. 提取域名
+    domain = ARGO_DOMAIN or _extract_argo_domain_from_log()
 
-    VMESS = {
-        "v": "2", "ps": f"{NAME}-{ISP}", "add": CFIP, "port": CFPORT, "id": UUID,
-        "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain,
-        "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"
-    }
-    raw = f"""vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
+    # 6. 生成订阅
+    get_global_subscription(domain)
 
-vmess://{base64.b64encode(json.dumps(VMESS).encode()).decode()}
+    # 7. 创建 lockFile（永久保留）
+    with open(lockFile, 'w') as f:
+        f.write(str(int(time.time())))
 
-trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
-"""
-    b64_content = base64.b64encode(raw.encode('utf-8')).decode('utf-8')
-    with open(subPath, 'w', encoding='utf-8') as f:
-        f.write(b64_content)
-    logging.info(f"saved (ISP: {ISP})")
-    uplodNodes()
-
-def uplodNodes():
-    if UPLOAD_URL and PROJECT_URL:
-        url = f"{PROJECT_URL}/{SUB_PATH}"
-        try:
-            requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json={"subscription": [url]}, timeout=10)
-            logging.info("URL uploaded")
-        except Exception as e:
-            logging.info(f"Upload sub URL error: {e}")
-    elif UPLOAD_URL and os.path.exists(listPath):
-        with open(listPath, 'r', encoding='utf-8') as f:
-            content = f.read()
-        nodes = [line for line in content.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
-        if nodes:
-            try:
-                requests.post(f"{UPLOAD_URL}/api/add-nodes", json={"nodes": nodes}, timeout=10)
-                logging.info("Nodes uploaded")
-            except Exception as e:
-                logging.info(f"Upload nodes error: {e}")
-
-def AddVisitTask():
+    # 8. 访问任务
     if AUTO_ACCESS and PROJECT_URL:
         try:
             requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL}, timeout=5)
         except:
             pass
 
-# ====================== Streamlit UI (English) ======================
-def check_id(user_input: str) -> bool:
-    return user_input.strip() == UUID.strip()
+    logging.info("GLOBAL SERVICE INITIALIZED (lockFile created - PERMANENT)")
+    return domain
 
-def read_b64_subscription() -> str:
-    if not os.path.exists(subPath):
-        return ""
-    try:
-        with open(subPath, 'r', encoding='utf-8') as f:
-            return f.read().strip()
-    except:
-        return ""
 
+def _extract_argo_domain_from_log():
+    for _ in range(15):
+        if os.path.exists(bootLogPath):
+            try:
+                with open(bootLogPath, 'r', encoding='utf-8') as f:
+                    for line in f.readlines():
+                        if m := re.search(r'https?://([^ ]*trycloudflare\.com)', line):
+                            return m.group(1)
+            except:
+                pass
+        time.sleep(2)
+    return "unknown.trycloudflare.com"
+
+
+# ====================== 自动清理（90秒后，**不删 lockFile**）======================
+def schedule_cleanup():
+    def _cleanup():
+        time.sleep(90)
+        files = [bootLogPath, configPath, subPath]  # 不删 lockFile
+        for path in [p for p in [globals().get('webPath'), globals().get('botPath'), npmPath, phpPath] if p and os.path.exists(p)]:
+            files.append(path)
+        for ext in ['tunnel.json', 'tunnel.yml']:
+            f = os.path.join(FILE_PATH, ext)
+            if os.path.exists(f):
+                files.append(f)
+        if files:
+            subprocess.run(f"rm -f {' '.join(files)}", shell=True, stdout=subprocess.DEVNULL)
+        logging.info("Temporary files cleaned (lockFile kept)")
+    threading.Thread(target=_cleanup, daemon=True).start()
+
+
+# ====================== 主界面 ======================
 def main():
-    global web_file_name, bot_file_name, webPath, botPath
-
-    # Generate random filenames
-    web_file_name = generate_random_name(5)
-    bot_file_name = generate_random_name(5)
-    webPath = os.path.join(FILE_PATH, web_file_name)
-    botPath = os.path.join(FILE_PATH, bot_file_name)
-
-    st.set_page_config(page_title="Viewer", layout="centered")
-    st.title("Viewer")
+    st.set_page_config(page_title="Proxy Viewer", layout="centered")
+    st.title("Proxy Node Viewer")
     st.markdown("---")
 
-    if "id_verified" not in st.session_state:
-        st.session_state.id_verified = False
+    # 初始化 session_state
+    if "passwd_verified" not in st.session_state:
+        st.session_state.passwd_verified = False
+    if "argo_domain" not in st.session_state:
+        st.session_state.argo_domain = None
 
-    # ========== 1. sub.txt does not exist → auto init ==========
-    if not os.path.exists(subPath):
-        with st.spinner("Initializing service, please wait..."):
+    # === 1. 判断是否已初始化：只看 lockFile 是否存在 ===
+    if not os.path.exists(lockFile):
+        with st.spinner("Initializing global service (first user triggers)..."):
             try:
-                argoType()
-                deleteNodes()
-                cleanupOldFiles()
-                downloadFilesAndRun()
-                extractARGO_DOMAINs()
-                AddVisitTask()
-
-                clean_thread = threading.Thread(target=cleanFiles, daemon=True)
-                clean_thread.start()
-
-                st.success("Initialization completed! generated")
-                st.info("Refresh the page and enter UUID to view")
-                time.sleep(2)
+                domain = start_proxy_service_once()
+                st.session_state.argo_domain = domain
+                schedule_cleanup()  # 清理临时文件（不删 lockFile）
+                st.success("Service initialized!")
+                st.info("Refresh and enter password")
+                time.sleep(1)
                 st.rerun()
             except Exception as e:
-                st.error(f"Initialization failed: {e}")
-                logging.error(f"Auto init error: {e}", exc_info=True)
+                st.error(f"Init failed: {e}")
+                logging.error(f"Service error: {e}", exc_info=True)
         return
+    else:
+        # lockFile 存在 → 服务已初始化
+        if st.session_state.argo_domain is None:
+            domain = ARGO_DOMAIN
+            if not domain and os.path.exists(bootLogPath):
+                try:
+                    with open(bootLogPath, 'r') as f:
+                        if m := re.search(r'https?://([^ ]*trycloudflare\.com)', f.read()):
+                            domain = m.group(1)
+                except:
+                    pass
+            st.session_state.argo_domain = domain or "unknown.trycloudflare.com"
 
-    # ========== 2. sub.txt exists → show input box ==========
-    if not st.session_state.id_verified:
-        user_id = st.text_input(
-            "Enter UUID to view text",
-            placeholder="e.g.: 1f6f5a40-80d0-4dbf-974d-4d53ff18d639",
-            type="password",
-            key="id_input"
-        )
-        if user_id and check_id(user_id):
-            st.session_state.id_verified = True
-            st.success("Verification successful!")
-            st.rerun()
-        elif user_id:
-            st.error("Invalid UUID")
+    # === 2. 密码验证 ===
+    if not st.session_state.passwd_verified:
+        pwd = st.text_input("Enter password", type="password", placeholder="Default: admin123")
+        if pwd:
+            if check_passwd(pwd):
+                st.session_state.passwd_verified = True
+                st.success("Login successful!")
+                st.rerun()
+            else:
+                st.error("Incorrect password")
         else:
-            st.info("Please enter the correct UUID to view the text")
+            st.info("Please enter the correct password")
         return
 
-    # ========== 3. Show base64 content ==========
-    b64_content = read_b64_subscription()
-    if not b64_content:
-        st.error("content is empty")
-        return
+    # === 3. 显示订阅（内存缓存）===
+    b64_content = get_global_subscription(st.session_state.argo_domain)
 
-    st.subheader("Content (Base64)")
-    st.text_area("Click to select all → Copy", b64_content, height=150, key="b64_text")
-    st.download_button(
-        label="Download sub.txt (Recommended)",
-        data=b64_content,
-        file_name="sub.txt",
-        mime="text/plain"
-    )
-    st.success("**Copied or downloaded! Import directly in v2rayN → → From clipboard/file**")
+    st.subheader("Subscription (Base64)")
+    st.text_area("Click to select all", b64_content, height=150)
+    st.download_button("Download sub.txt", b64_content, "sub.txt", "text/plain")
+    st.success("Done!")
+
+    if st.button("Force Refresh Cache (Admin)"):
+        get_global_subscription.clear()
+        st.success("Refreshing...")
+        st.rerun()
+
 
 if __name__ == "__main__":
     main()
