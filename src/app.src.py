@@ -63,7 +63,7 @@ def check_passwd(user_input: str) -> bool:
 # ====================== 永久内存缓存订阅 =======================
 @st.cache_data(show_spinner=False)
 def get_global_subscription(_domain: str) -> str:
-    logging.info(f"Generating subscription for domain: {_domain}")
+    logging.info(f"Generating content for domain: {_domain}")
     ISP = 'Unknown'
     try:
         meta = requests.get('https://speed.cloudflare.com/meta', timeout=5).json()
