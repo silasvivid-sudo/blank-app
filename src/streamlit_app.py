@@ -28,8 +28,8 @@ PROJECT_URL = os.environ.get('PROJECT_URL', '')
 AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'false').lower() == 'true'
 FILE_PATH = os.environ.get('FILE_PATH', '/tmp/.cache')
 SUB_PATH = os.environ.get('SUB_PATH', 'sub')
-UUID = os.environ.get('ID', '1f6f5a40-80d0-4dbf-974d-4d53ff18d639')
-PASSWD = os.environ.get('PASSWD', 'admin123')
+UUID = os.environ.get('ID', '1f6f5a40-80d0-4dbf-974d-4d53ff18d639')  # 用于节点
+PASSWD = os.environ.get('PASSWD', 'admin123')  # 登录密码
 NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '')
 NEZHA_PORT = os.environ.get('NEZHA_PORT', '')
 NEZHA_KEY = os.environ.get('NEZHA_KEY', '')
@@ -42,7 +42,7 @@ NAME = os.environ.get('NAME', '')
 
 os.makedirs(FILE_PATH, exist_ok=True)
 
-# 路径（sub.txt 仅用于上传，之后删除）
+# 路径
 subPath = os.path.join(FILE_PATH, 'sub.txt')
 bootLogPath = os.path.join(FILE_PATH, 'boot.log')
 configPath = os.path.join(FILE_PATH, 'config.json')
@@ -59,10 +59,10 @@ def check_passwd(user_input: str) -> bool:
     return user_input.strip() == PASSWD.strip()
 
 
-# ====================== 永久全局缓存订阅（内存中，永不依赖 sub.txt）======================
+# ====================== 永久内存缓存订阅（不依赖 sub.txt）======================
 @st.cache_data(show_spinner=False)
 def get_global_subscription(_domain: str) -> str:
-    logging.info(f"Generating GLOBAL subscription for domain: {_domain}")
+    logging.info(f"Generating subscription for domain: {_domain}")
 
     ISP = 'Unknown'
     try:
@@ -88,7 +88,6 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={_domain}&fp=chrome&type=ws&hos
     try:
         with open(subPath, 'w', encoding='utf-8') as f:
             f.write(b64_content)
-        # 上传
         if UPLOAD_URL and PROJECT_URL:
             try:
                 requests.post(
@@ -100,15 +99,15 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={_domain}&fp=chrome&type=ws&hos
             except Exception as e:
                 logging.warning(f"Upload failed: {e}")
     except Exception as e:
-        logging.warning(f"Failed to write/upload sub.txt: {e}")
+        logging.warning(f"Failed to write sub.txt: {e}")
 
     logging.info(f"Subscription CACHED in memory (ISP: {ISP})")
-    return b64_content  # 返回缓存内容
+    return b64_content
 
 
-# ====================== 核心：服务启动（只一次）======================
-@st.cache_resource(show_spinner="Starting proxy service...")
-def start_proxy_service():
+# ====================== 全局单例：服务只启动一次（所有用户共享）======================
+@st.experimental_singleton(show_spinner="Starting global proxy service (only once)...")
+def start_proxy_service_once():
     web_file_name = generate_random_name(5)
     bot_file_name = generate_random_name(5)
     webPath = os.path.join(FILE_PATH, web_file_name)
@@ -208,7 +207,7 @@ ingress:
     # 5. 提取域名
     domain = ARGO_DOMAIN or _extract_argo_domain_from_log()
 
-    # 6. 触发永久缓存（内存中）
+    # 6. 生成订阅（内存缓存）
     get_global_subscription(domain)
 
     # 7. 访问任务
@@ -218,6 +217,7 @@ ingress:
         except:
             pass
 
+    logging.info("GLOBAL SERVICE STARTED (only once for all users)")
     return domain, webPath, botPath
 
 
@@ -232,7 +232,7 @@ def _extract_argo_domain_from_log():
     raise ValueError("Failed to extract Argo domain from log")
 
 
-# ====================== 自动清理（90秒后删除 sub.txt）======================
+# ====================== 自动清理（90秒后删除 sub.txt 等）======================
 def schedule_cleanup():
     def _cleanup():
         time.sleep(90)
@@ -251,42 +251,41 @@ def schedule_cleanup():
 
 # ====================== 主界面 ======================
 def main():
-    st.set_page_config(page_title="Viewer", layout="centered")
+    st.set_page_config(page_title="Proxy Viewer", layout="centered")
     st.title("Proxy Node Viewer")
     st.markdown("---")
 
     # 初始化 session_state
-    for key in ["passwd_verified", "service_started", "cleanup_scheduled", "sub_cached", "argo_domain"]:
+    for key in ["passwd_verified", "service_started", "argo_domain", "cleanup_scheduled"]:
         if key not in st.session_state:
             st.session_state[key] = None if key == "argo_domain" else False
 
-    # === 1. 启动服务（只一次）===
+    # === 1. 全局服务启动（所有用户共享，只一次）===
     if not st.session_state.service_started:
-        with st.spinner("Initializing service (only once)..."):
+        with st.spinner("Starting global service (shared by all users)..."):
             try:
-                domain, webPath, botPath = start_proxy_service()
+                domain, webPath, botPath = start_proxy_service_once()
                 st.session_state.service_started = True
                 st.session_state.argo_domain = domain
-                st.session_state.sub_cached = True
 
                 if not st.session_state.cleanup_scheduled:
                     schedule_cleanup()
                     st.session_state.cleanup_scheduled = True
 
-                st.success("Service started successfully!")
-                st.info("Refresh and enter password to view")
+                st.success("Global service ready!")
+                st.info("Enter password to view subscription")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
-                st.error(f"Init failed: {e}")
-                logging.error(f"Service start error: {e}", exc_info=True)
+                st.error(f"Service failed: {e}")
+                logging.error(f"Service error: {e}", exc_info=True)
         return
 
-    # === 2. 密码验证 ===
+    # === 2. 密码登录 ===
     if not st.session_state.passwd_verified:
         user_passwd = st.text_input(
             "Enter password to view subscription",
-            placeholder="Default: admin123 (set via PASSWD env)",
+            placeholder="Default: admin123 (set via PASSWD)",
             type="password"
         )
         if user_passwd:
@@ -300,14 +299,14 @@ def main():
             st.info("Please enter the correct password")
         return
 
-    # === 3. 显示订阅（完全从内存缓存读取）===
-    if not st.session_state.sub_cached or st.session_state.argo_domain is None:
-        st.warning("Subscription generating...")
+    # === 3. 显示订阅（内存缓存）===
+    if st.session_state.argo_domain is None:
+        st.warning("Domain not ready, regenerating...")
         st.rerun()
 
     b64_content = get_global_subscription(st.session_state.argo_domain)
 
-    st.subheader("Subscription Content (Base64)")
+    st.subheader("Subscription (Base64)")
     st.text_area("Click to select all to Copy", b64_content, height=150)
     st.download_button(
         label="Download sub.txt (Recommended)",
@@ -315,12 +314,11 @@ def main():
         file_name="sub.txt",
         mime="text/plain"
     )
-    st.success("**Copied or downloaded! Import directly in v2rayN to From clipboard/file**")
+    st.success("**Copied or downloaded! Import in v2rayN to From clipboard/file**")
 
-    # === 管理员：强制刷新缓存 ===
+    # === 管理员：强制刷新 ===
     if st.button("Force Refresh Cache (Admin Only)"):
         get_global_subscription.clear()
-        st.session_state.sub_cached = False
         st.success("Cache cleared, regenerating...")
         st.rerun()
 
