@@ -275,8 +275,8 @@ def schedule_cleanup():
 
 # ====================== 主界面 ======================
 def main():
-    st.set_page_config(page_title="Proxy Viewer", layout="centered")
-    st.title("Proxy Node Viewer")
+    st.set_page_config(page_title="Viewer", layout="centered")
+    st.title("Viewer")
     st.markdown("---")
 
     # 初始化 session_state
