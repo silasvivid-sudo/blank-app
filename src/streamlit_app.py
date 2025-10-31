@@ -12,6 +12,8 @@ import requests
 import platform
 import logging
 import threading
+import random
+import string
 
 # 配置日志
 logging.basicConfig(
@@ -39,8 +41,16 @@ NAME = os.environ.get('NAME', '')
 
 # Paths
 os.makedirs(FILE_PATH, exist_ok=True)
-webPath = os.path.join(FILE_PATH, 'web')
-botPath = os.path.join(FILE_PATH, 'cfd')
+
+# 动态生成随机文件名（5位）
+def generate_random_name(length=5):
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+# 全局变量（将在 main 中初始化）
+web_file_name = None
+bot_file_name = None
+webPath = None
+botPath = None
 subPath = os.path.join(FILE_PATH, 'sub.txt')
 listPath = os.path.join(FILE_PATH, 'list.txt')
 bootLogPath = os.path.join(FILE_PATH, 'boot.log')
@@ -51,19 +61,26 @@ phpPath = os.path.join(FILE_PATH, 'php')
 # ====================== cleanFiles：90秒后清理 ======================
 def cleanFiles():
     time.sleep(90)
-    filesToDelete = [bootLogPath, configPath, webPath, botPath]
+    filesToDelete = [bootLogPath, configPath, subPath, listPath]
+    if os.path.exists(webPath): filesToDelete.append(webPath)
+    if os.path.exists(botPath): filesToDelete.append(botPath)
     if NEZHA_PORT and os.path.exists(npmPath):
         filesToDelete.append(npmPath)
     elif NEZHA_SERVER and NEZHA_KEY and os.path.exists(phpPath):
         filesToDelete.append(phpPath)
-    cmd = f"rm -rf {' '.join(filesToDelete)}"
+    tunnel_json = os.path.join(FILE_PATH, 'tunnel.json')
+    tunnel_yml = os.path.join(FILE_PATH, 'tunnel.yml')
+    if os.path.exists(tunnel_json): filesToDelete.append(tunnel_json)
+    if os.path.exists(tunnel_yml): filesToDelete.append(tunnel_yml)
+
+    cmd = f"rm -f {' '.join(filesToDelete)}"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     logging.info(f"Clean files: {result.stdout} {result.stderr}")
     os.system('clear')
     logging.info('App is running')
     logging.info('Thank you for using this script, enjoy!')
 
-# ====================== 其他函数（同 tmp.py 逻辑） ======================
+# ====================== 其他函数 ======================
 
 def deleteNodes():
     if not UPLOAD_URL or not os.path.exists(subPath):
@@ -79,12 +96,18 @@ def deleteNodes():
         logging.info(f"deleteNodes error: {e}")
 
 def cleanupOldFiles():
-    paths = ['web', 'cfd', 'npm', 'php', 'sub.txt', 'boot.log']
-    for name in paths:
+    # 清理旧的可执行文件（排除当前运行的）
+    safe_keep = {web_file_name, bot_file_name, 'npm', 'php', 'sub.txt', 'boot.log', 'config.json', 'tunnel.json', 'tunnel.yml'}
+    for name in os.listdir(FILE_PATH):
+        if name in safe_keep:
+            continue
         fp = os.path.join(FILE_PATH, name)
-        if os.path.exists(fp):
-            try: os.unlink(fp); logging.info(f"Cleaned {fp}")
-            except: pass
+        if os.path.isfile(fp) and os.access(fp, os.X_OK):
+            try:
+                os.unlink(fp)
+                logging.info(f"Cleaned old executable: {fp}")
+            except:
+                pass
 
 # 生成 xray 配置
 config = {
@@ -133,18 +156,28 @@ def downloadFile(name, url):
     logging.info(f"Downloaded {name}")
 
 def downloadFilesAndRun():
+    global webPath, botPath, npmPath, phpPath
     arch = getSystemArchitecture()
     files = [
-        {"fileName": "web", "fileUrl": f"https://{arch}64.ssss.nyc.mn/web"},
-        {"fileName": "cfd", "fileUrl": f"https://{arch}64.ssss.nyc.mn/2go"}
+        {"fileName": web_file_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/web"},
+        {"fileName": bot_file_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/2go"}
     ]
     if NEZHA_SERVER and NEZHA_KEY:
         agent = "agent" if NEZHA_PORT else "v1"
-        files.insert(0, {"fileName": "npm" if NEZHA_PORT else "php", "fileUrl": f"https://{arch}64.ssss.nyc.mn/{agent}"})
+        agent_name = "npm" if NEZHA_PORT else "php"
+        agent_path = os.path.join(FILE_PATH, agent_name)
+        if agent_name == "npm":
+            npmPath = agent_path
+        else:
+            phpPath = agent_path
+        files.insert(0, {"fileName": agent_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/{agent}"})
 
     for f in files:
-        try: downloadFile(f['fileName'], f['fileUrl'])
-        except Exception as e: logging.info(f"Download failed {f['fileName']}: {e}"); return
+        try:
+            downloadFile(f['fileName'], f['fileUrl'])
+        except Exception as e:
+            logging.info(f"Download failed {f['fileName']}: {e}")
+            return
 
     subprocess.Popen([webPath, '-c', configPath], stdout=sys.stdout, stderr=sys.stderr, text=True)
     logging.info("xray started")
@@ -163,10 +196,15 @@ def downloadFilesAndRun():
     time.sleep(2)
 
 def argoType():
-    if not ARGO_AUTH or not ARGO_DOMAIN: return
+    if not ARGO_AUTH or not ARGO_DOMAIN:
+        return
     if 'TunnelSecret' in ARGO_AUTH:
-        with open(os.path.join(FILE_PATH, 'tunnel.json'), 'w') as f: f.write(ARGO_AUTH)
-        tunnel_id = ARGO_AUTH.split('"')[11]
+        with open(os.path.join(FILE_PATH, 'tunnel.json'), 'w') as f:
+            f.write(ARGO_AUTH)
+        try:
+            tunnel_id = ARGO_AUTH.split('"')[11]
+        except:
+            tunnel_id = "unknown"
         yaml_content = f"""tunnel: {tunnel_id}
 credentials-file: {os.path.join(FILE_PATH, 'tunnel.json')}
 protocol: http2
@@ -177,7 +215,8 @@ ingress:
       noTLSVerify: true
   - service: http_status:404
 """
-        with open(os.path.join(FILE_PATH, 'tunnel.yml'), 'w') as f: f.write(yaml_content)
+        with open(os.path.join(FILE_PATH, 'tunnel.yml'), 'w') as f:
+            f.write(yaml_content)
 
 def extractARGO_DOMAINs():
     if ARGO_AUTH and ARGO_DOMAIN:
@@ -192,7 +231,8 @@ def extractARGO_DOMAINs():
         else:
             raise ValueError("No domain")
     except:
-        if os.path.exists(bootLogPath): os.unlink(bootLogPath)
+        if os.path.exists(bootLogPath):
+            os.unlink(bootLogPath)
         subprocess.run('pkill -f "[b]ot"', shell=True)
         time.sleep(3)
         cmd = f"nohup {botPath} tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {bootLogPath} --loglevel info --url http://localhost:{ARGO_PORT} &"
@@ -254,9 +294,10 @@ def AddVisitTask():
     if AUTO_ACCESS and PROJECT_URL:
         try:
             requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL})
-        except: pass
+        except:
+            pass
 
-# ====================== Streamlit 界面（关键修复） ======================
+# ====================== Streamlit 界面 ======================
 
 def check_id(user_input: str) -> bool:
     return user_input.strip() == UUID.strip()
@@ -271,6 +312,14 @@ def read_b64_subscription() -> str:
         return ""
 
 def main():
+    global web_file_name, bot_file_name, webPath, botPath
+
+    # === 动态生成随机文件名 ===
+    web_file_name = generate_random_name(5)
+    bot_file_name = generate_random_name(5)
+    webPath = os.path.join(FILE_PATH, web_file_name)
+    botPath = os.path.join(FILE_PATH, bot_file_name)
+
     st.set_page_config(page_title="订阅查看器", layout="centered")
     st.title("订阅信息查看器")
     st.markdown("---")
@@ -278,7 +327,7 @@ def main():
     if "id_verified" not in st.session_state:
         st.session_state.id_verified = False
 
-    # ========== 1. sub.txt 不存在 → 自动初始化（不显示输入框） ==========
+    # ========== 1. sub.txt 不存在 → 自动初始化 ==========
     if not os.path.exists(subPath):
         with st.spinner("正在自动初始化服务，请稍候..."):
             try:
@@ -319,25 +368,20 @@ def main():
             st.info("请输入正确的 UUID 查看 base64 订阅")
         return
 
-    # ========== 3. 显示 base64 内容（关键：不使用 st.code） ==========
+    # ========== 3. 显示 base64 内容 ==========
     b64_content = read_b64_subscription()
     if not b64_content:
         st.error("订阅内容为空")
         return
 
     st.subheader("订阅内容（Base64）")
-
-    # 方式1：文本框（可复制）
     st.text_area("点击全选 → 复制", b64_content, height=150, key="b64_text")
-
-    # 方式2：下载按钮（最推荐）
     st.download_button(
         label="下载 sub.txt（推荐）",
         data=b64_content,
         file_name="sub.txt",
         mime="text/plain"
     )
-
     st.success("**已复制或下载！直接在 v2rayN → 订阅 → 从剪贴板/文件导入**")
 
 if __name__ == "__main__":
