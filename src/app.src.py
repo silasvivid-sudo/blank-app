@@ -15,7 +15,7 @@ import threading
 import random
 import string
 
-# 配置日志（仅输出到控制台的关键信息）
+# Configure logging (only key info to console)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -42,7 +42,7 @@ NAME = os.environ.get('NAME', '')
 # Paths
 os.makedirs(FILE_PATH, exist_ok=True)
 
-# 全局路径（将在 main 中动态生成）
+# Global paths (generated dynamically in main)
 web_file_name = None
 bot_file_name = None
 webPath = None
@@ -54,11 +54,11 @@ configPath = os.path.join(FILE_PATH, 'config.json')
 npmPath = os.path.join(FILE_PATH, 'npm')
 phpPath = os.path.join(FILE_PATH, 'php')
 
-# ====================== 随机文件名生成 ======================
+# ====================== Random filename generation ======================
 def generate_random_name(length=5):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
-# ====================== 90秒后清理文件 ======================
+# ====================== Clean files after 90 seconds ======================
 def cleanFiles():
     time.sleep(90)
     filesToDelete = [bootLogPath, configPath, subPath, listPath]
@@ -78,7 +78,7 @@ def cleanFiles():
     logging.info('App is running')
     logging.info('Thank you for using this script, enjoy!')
 
-# ====================== 其他函数 ======================
+# ====================== Other functions ======================
 def deleteNodes():
     if not UPLOAD_URL or not os.path.exists(subPath):
         return
@@ -105,7 +105,7 @@ def cleanupOldFiles():
             except:
                 pass
 
-# 生成 xray 配置
+# Generate xray config
 config = {
     "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
     "inbounds": [
@@ -177,7 +177,7 @@ def downloadFilesAndRun():
     for f in files:
         downloadFile(f['fileName'], f['fileUrl'])
 
-    # 静默启动 xray
+    # Silent start xray
     subprocess.Popen(
         [webPath, '-c', configPath],
         stdout=subprocess.DEVNULL,
@@ -195,7 +195,7 @@ def downloadFilesAndRun():
         cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", "--protocol", "http2",
                     "--logfile", bootLogPath, "--loglevel", "info", "--url", f"http://localhost:{ARGO_PORT}"]
 
-    # 静默启动 cloudflared
+    # Silent start cloudflared
     subprocess.Popen(
         cfd_cmd,
         stdout=subprocess.DEVNULL,
@@ -277,7 +277,7 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws
     b64_content = base64.b64encode(raw.encode('utf-8')).decode('utf-8')
     with open(subPath, 'w', encoding='utf-8') as f:
         f.write(b64_content)
-    logging.info(f"file saved (ISP: {ISP})")
+    logging.info(f"saved (ISP: {ISP})")
     uplodNodes()
 
 def uplodNodes():
@@ -285,7 +285,7 @@ def uplodNodes():
         url = f"{PROJECT_URL}/{SUB_PATH}"
         try:
             requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json={"subscription": [url]}, timeout=10)
-            logging.info("Subscription URL uploaded")
+            logging.info("URL uploaded")
         except Exception as e:
             logging.info(f"Upload sub URL error: {e}")
     elif UPLOAD_URL and os.path.exists(listPath):
@@ -306,7 +306,7 @@ def AddVisitTask():
         except:
             pass
 
-# ====================== Streamlit 界面 ======================
+# ====================== Streamlit UI (English) ======================
 def check_id(user_input: str) -> bool:
     return user_input.strip() == UUID.strip()
 
@@ -322,22 +322,22 @@ def read_b64_subscription() -> str:
 def main():
     global web_file_name, bot_file_name, webPath, botPath
 
-    # 动态生成随机文件名
+    # Generate random filenames
     web_file_name = generate_random_name(5)
     bot_file_name = generate_random_name(5)
     webPath = os.path.join(FILE_PATH, web_file_name)
     botPath = os.path.join(FILE_PATH, bot_file_name)
 
-    st.set_page_config(page_title="订阅查看器", layout="centered")
-    st.title("订阅信息查看器")
+    st.set_page_config(page_title="Viewer", layout="centered")
+    st.title("Viewer")
     st.markdown("---")
 
     if "id_verified" not in st.session_state:
         st.session_state.id_verified = False
 
-    # ========== 1. sub.txt 不存在 → 自动初始化 ==========
+    # ========== 1. sub.txt does not exist → auto init ==========
     if not os.path.exists(subPath):
-        with st.spinner("正在自动初始化服务，请稍候..."):
+        with st.spinner("Initializing service, please wait..."):
             try:
                 argoType()
                 deleteNodes()
@@ -349,48 +349,48 @@ def main():
                 clean_thread = threading.Thread(target=cleanFiles, daemon=True)
                 clean_thread.start()
 
-                st.success("初始化完成！订阅已生成")
-                st.info("页面刷新后请输入 UUID 查看")
+                st.success("Initialization completed! generated")
+                st.info("Refresh the page and enter UUID to view")
                 time.sleep(2)
                 st.rerun()
             except Exception as e:
-                st.error(f"初始化失败: {e}")
+                st.error(f"Initialization failed: {e}")
                 logging.error(f"Auto init error: {e}", exc_info=True)
         return
 
-    # ========== 2. sub.txt 存在 → 显示输入框 ==========
+    # ========== 2. sub.txt exists → show input box ==========
     if not st.session_state.id_verified:
         user_id = st.text_input(
-            "请输入 UUID 以查看订阅",
-            placeholder="例如: 1f6f5a40-80d0-4dbf-974d-4d53ff18d639",
+            "Enter UUID to view text",
+            placeholder="e.g.: 1f6f5a40-80d0-4dbf-974d-4d53ff18d639",
             type="password",
             key="id_input"
         )
         if user_id and check_id(user_id):
             st.session_state.id_verified = True
-            st.success("验证成功！")
+            st.success("Verification successful!")
             st.rerun()
         elif user_id:
-            st.error("UUID 错误")
+            st.error("Invalid UUID")
         else:
-            st.info("请输入正确的 UUID 查看 base64 订阅")
+            st.info("Please enter the correct UUID to view the base64 subscription")
         return
 
-    # ========== 3. 显示 base64 内容 ==========
+    # ========== 3. Show base64 content ==========
     b64_content = read_b64_subscription()
     if not b64_content:
-        st.error("订阅内容为空")
+        st.error("content is empty")
         return
 
-    st.subheader("订阅内容（Base64）")
-    st.text_area("点击全选 → 复制", b64_content, height=150, key="b64_text")
+    st.subheader("Content (Base64)")
+    st.text_area("Click to select all → Copy", b64_content, height=150, key="b64_text")
     st.download_button(
-        label="下载 sub.txt（推荐）",
+        label="Download sub.txt (Recommended)",
         data=b64_content,
         file_name="sub.txt",
         mime="text/plain"
     )
-    st.success("**已复制或下载！直接在 v2rayN → 订阅 → 从剪贴板/文件导入**")
+    st.success("**Copied or downloaded! Import directly in v2rayN → → From clipboard/file**")
 
 if __name__ == "__main__":
     main()
