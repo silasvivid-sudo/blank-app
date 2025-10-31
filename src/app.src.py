@@ -373,7 +373,7 @@ def main():
         elif user_id:
             st.error("Invalid UUID")
         else:
-            st.info("Please enter the correct UUID to view the base64 subscription")
+            st.info("Please enter the correct UUID to view the text")
         return
 
     # ========== 3. Show base64 content ==========
