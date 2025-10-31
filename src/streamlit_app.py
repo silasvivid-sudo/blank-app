@@ -75,7 +75,6 @@ def cleanFiles():
         subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logging.info("Temporary files cleaned")
 
-    os.system('clear')
     logging.info('App is running')
     logging.info('Thank you for using this script, enjoy!')
 
