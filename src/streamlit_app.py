@@ -15,7 +15,7 @@ import threading
 import random
 import string
 
-# 配置日志
+# 配置日志（仅输出到控制台的关键信息）
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -42,11 +42,7 @@ NAME = os.environ.get('NAME', '')
 # Paths
 os.makedirs(FILE_PATH, exist_ok=True)
 
-# 动态生成随机文件名（5位）
-def generate_random_name(length=5):
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
-
-# 全局变量（将在 main 中初始化）
+# 全局路径（将在 main 中动态生成）
 web_file_name = None
 bot_file_name = None
 webPath = None
@@ -58,30 +54,32 @@ configPath = os.path.join(FILE_PATH, 'config.json')
 npmPath = os.path.join(FILE_PATH, 'npm')
 phpPath = os.path.join(FILE_PATH, 'php')
 
-# ====================== cleanFiles：90秒后清理 ======================
+# ====================== 随机文件名生成 ======================
+def generate_random_name(length=5):
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+# ====================== 90秒后清理文件 ======================
 def cleanFiles():
     time.sleep(90)
     filesToDelete = [bootLogPath, configPath, subPath, listPath]
-    if os.path.exists(webPath): filesToDelete.append(webPath)
-    if os.path.exists(botPath): filesToDelete.append(botPath)
-    if NEZHA_PORT and os.path.exists(npmPath):
-        filesToDelete.append(npmPath)
-    elif NEZHA_SERVER and NEZHA_KEY and os.path.exists(phpPath):
-        filesToDelete.append(phpPath)
-    tunnel_json = os.path.join(FILE_PATH, 'tunnel.json')
-    tunnel_yml = os.path.join(FILE_PATH, 'tunnel.yml')
-    if os.path.exists(tunnel_json): filesToDelete.append(tunnel_json)
-    if os.path.exists(tunnel_yml): filesToDelete.append(tunnel_yml)
+    for path in [webPath, botPath, npmPath, phpPath]:
+        if path and os.path.exists(path):
+            filesToDelete.append(path)
+    for ext in ['tunnel.json', 'tunnel.yml']:
+        f = os.path.join(FILE_PATH, ext)
+        if os.path.exists(f):
+            filesToDelete.append(f)
 
-    cmd = f"rm -f {' '.join(filesToDelete)}"
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    logging.info(f"Clean files: {result.stdout} {result.stderr}")
+    if filesToDelete:
+        cmd = f"rm -f {' '.join(filesToDelete)}"
+        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logging.info("Temporary files cleaned")
+
     os.system('clear')
     logging.info('App is running')
     logging.info('Thank you for using this script, enjoy!')
 
 # ====================== 其他函数 ======================
-
 def deleteNodes():
     if not UPLOAD_URL or not os.path.exists(subPath):
         return
@@ -91,13 +89,12 @@ def deleteNodes():
         decoded = base64.b64decode(content).decode('utf-8')
         nodes = [line for line in decoded.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
         if nodes:
-            requests.post(f"{UPLOAD_URL}/api/delete-nodes", json={"nodes": nodes})
+            requests.post(f"{UPLOAD_URL}/api/delete-nodes", json={"nodes": nodes}, timeout=10)
     except Exception as e:
         logging.info(f"deleteNodes error: {e}")
 
 def cleanupOldFiles():
-    # 清理旧的可执行文件（排除当前运行的）
-    safe_keep = {web_file_name, bot_file_name, 'npm', 'php', 'sub.txt', 'boot.log', 'config.json', 'tunnel.json', 'tunnel.yml'}
+    safe_keep = {web_file_name, bot_file_name, 'sub.txt', 'boot.log', 'config.json', 'tunnel.json', 'tunnel.yml', 'npm', 'php'}
     for name in os.listdir(FILE_PATH):
         if name in safe_keep:
             continue
@@ -105,7 +102,7 @@ def cleanupOldFiles():
         if os.path.isfile(fp) and os.access(fp, os.X_OK):
             try:
                 os.unlink(fp)
-                logging.info(f"Cleaned old executable: {fp}")
+                logging.info(f"Cleaned old executable: {name}")
             except:
                 pass
 
@@ -148,12 +145,17 @@ def getSystemArchitecture():
 
 def downloadFile(name, url):
     path = os.path.join(FILE_PATH, name)
-    r = requests.get(url, stream=True)
-    r.raise_for_status()
-    with open(path, 'wb') as f:
-        for c in r.iter_content(8192): f.write(c)
-    os.chmod(path, 0o775)
-    logging.info(f"Downloaded {name}")
+    try:
+        r = requests.get(url, stream=True, timeout=15)
+        r.raise_for_status()
+        with open(path, 'wb') as f:
+            for c in r.iter_content(8192):
+                f.write(c)
+        os.chmod(path, 0o775)
+        logging.info(f"Downloaded {name}")
+    except Exception as e:
+        logging.info(f"Download failed {name}: {e}")
+        raise
 
 def downloadFilesAndRun():
     global webPath, botPath, npmPath, phpPath
@@ -162,6 +164,7 @@ def downloadFilesAndRun():
         {"fileName": web_file_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/web"},
         {"fileName": bot_file_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/2go"}
     ]
+    agent_name = None
     if NEZHA_SERVER and NEZHA_KEY:
         agent = "agent" if NEZHA_PORT else "v1"
         agent_name = "npm" if NEZHA_PORT else "php"
@@ -173,14 +176,15 @@ def downloadFilesAndRun():
         files.insert(0, {"fileName": agent_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/{agent}"})
 
     for f in files:
-        try:
-            downloadFile(f['fileName'], f['fileUrl'])
-        except Exception as e:
-            logging.info(f"Download failed {f['fileName']}: {e}")
-            return
+        downloadFile(f['fileName'], f['fileUrl'])
 
-    subprocess.Popen([webPath, '-c', configPath], stdout=sys.stdout, stderr=sys.stderr, text=True)
-    logging.info("xray started")
+    # 静默启动 xray
+    subprocess.Popen(
+        [webPath, '-c', configPath],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    logging.info(f"{web_file_name} started")
     time.sleep(5)
 
     cfd_cmd = [botPath]
@@ -191,8 +195,14 @@ def downloadFilesAndRun():
     else:
         cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", "--protocol", "http2",
                     "--logfile", bootLogPath, "--loglevel", "info", "--url", f"http://localhost:{ARGO_PORT}"]
-    subprocess.Popen(cfd_cmd, stdout=sys.stdout, stderr=sys.stderr, text=True)
-    logging.info("cloudflared started")
+
+    # 静默启动 cloudflared
+    subprocess.Popen(
+        cfd_cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    logging.info(f"{bot_file_name} started")
     time.sleep(2)
 
 def argoType():
@@ -233,10 +243,10 @@ def extractARGO_DOMAINs():
     except:
         if os.path.exists(bootLogPath):
             os.unlink(bootLogPath)
-        subprocess.run('pkill -f "[b]ot"', shell=True)
+        subprocess.run('pkill -f "[b]ot"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(3)
         cmd = f"nohup {botPath} tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {bootLogPath} --loglevel info --url http://localhost:{ARGO_PORT} &"
-        subprocess.run(cmd, shell=True)
+        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(3)
         extractARGO_DOMAINs()
 
@@ -249,7 +259,7 @@ def generateLinks(argo_domain):
         try:
             ISP = subprocess.check_output(
                 'curl -s https://speed.cloudflare.com/meta | awk -F\\" \'{print $26"-"$18}\' | sed -e \'s/ /_/g\'',
-                shell=True, timeout=5
+                shell=True, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             ).decode().strip() or 'CF-Node'
         except:
             ISP = f"{NAME}-Node"
@@ -268,14 +278,14 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws
     b64_content = base64.b64encode(raw.encode('utf-8')).decode('utf-8')
     with open(subPath, 'w', encoding='utf-8') as f:
         f.write(b64_content)
-    logging.info(f"{subPath} saved successfully (ISP: {ISP})")
+    logging.info(f"Subscription saved (ISP: {ISP})")
     uplodNodes()
 
 def uplodNodes():
     if UPLOAD_URL and PROJECT_URL:
         url = f"{PROJECT_URL}/{SUB_PATH}"
         try:
-            requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json={"subscription": [url]})
+            requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json={"subscription": [url]}, timeout=10)
             logging.info("Subscription URL uploaded")
         except Exception as e:
             logging.info(f"Upload sub URL error: {e}")
@@ -285,7 +295,7 @@ def uplodNodes():
         nodes = [line for line in content.split('\n') if re.match(r'(vless|vmess|trojan|hysteria2|tuic):\/\/', line)]
         if nodes:
             try:
-                requests.post(f"{UPLOAD_URL}/api/add-nodes", json={"nodes": nodes})
+                requests.post(f"{UPLOAD_URL}/api/add-nodes", json={"nodes": nodes}, timeout=10)
                 logging.info("Nodes uploaded")
             except Exception as e:
                 logging.info(f"Upload nodes error: {e}")
@@ -293,12 +303,11 @@ def uplodNodes():
 def AddVisitTask():
     if AUTO_ACCESS and PROJECT_URL:
         try:
-            requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL})
+            requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL}, timeout=5)
         except:
             pass
 
 # ====================== Streamlit 界面 ======================
-
 def check_id(user_input: str) -> bool:
     return user_input.strip() == UUID.strip()
 
@@ -314,7 +323,7 @@ def read_b64_subscription() -> str:
 def main():
     global web_file_name, bot_file_name, webPath, botPath
 
-    # === 动态生成随机文件名 ===
+    # 动态生成随机文件名
     web_file_name = generate_random_name(5)
     bot_file_name = generate_random_name(5)
     webPath = os.path.join(FILE_PATH, web_file_name)
