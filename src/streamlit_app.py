@@ -48,7 +48,7 @@ bootLogPath = os.path.join(FILE_PATH, 'boot.log')
 configPath = os.path.join(FILE_PATH, 'config.json')
 npmPath = os.path.join(FILE_PATH, 'npm')
 phpPath = os.path.join(FILE_PATH, 'php')
-lockFile = os.path.join(FILE_PATH, 'service.lock')  # 全局锁文件
+lockFile = os.path.join(FILE_PATH, 'service.lock')  # 永久保留
 
 
 # ====================== 工具函数 ======================
@@ -64,7 +64,6 @@ def check_passwd(user_input: str) -> bool:
 @st.cache_data(show_spinner=False)
 def get_global_subscription(_domain: str) -> str:
     logging.info(f"Generating subscription for domain: {_domain}")
-
     ISP = 'Unknown'
     try:
         meta = requests.get('https://speed.cloudflare.com/meta', timeout=5).json()
@@ -102,15 +101,15 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={_domain}&fp=chrome&type=ws&hos
     except Exception as e:
         logging.warning(f"Failed to write sub.txt: {e}")
 
-    logging.info(f"Subscription cached in memory (ISP: {ISP})")
     return b64_content
 
 
-# ====================== 全局服务启动（锁文件 + cache_resource）======================
+# ====================== 全局服务启动（只看 lockFile）======================
 @st.cache_resource(show_spinner="Starting global proxy service...")
-def start_proxy_service_once(_lock=lockFile):
+def start_proxy_service_once():
+    # === 关键：只看 lockFile 是否存在 ===
     if os.path.exists(lockFile):
-        logging.info("Service already started (lock exists)")
+        logging.info("Service already initialized (lockFile exists)")
         domain = ARGO_DOMAIN
         if not domain and os.path.exists(bootLogPath):
             try:
@@ -122,13 +121,13 @@ def start_proxy_service_once(_lock=lockFile):
                 pass
         return domain or "unknown.trycloudflare.com"
 
-    # 生成随机文件名
+    # === 初始化流程 ===
     web_file_name = generate_random_name(5)
     bot_file_name = generate_random_name(5)
     webPath = os.path.join(FILE_PATH, web_file_name)
     botPath = os.path.join(FILE_PATH, bot_file_name)
 
-    # === 1. 生成 xray 配置 ===
+    # 1. 生成 xray 配置
     config = {
         "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
         "inbounds": [
@@ -162,14 +161,12 @@ def start_proxy_service_once(_lock=lockFile):
     with open(configPath, 'w') as f:
         json.dump(config, f, indent=2)
 
-    # === 2. 下载文件 ===
+    # 2. 下载文件
     arch = 'arm' if 'arm' in platform.machine().lower() or 'aarch64' in platform.machine().lower() else 'amd'
     files = [
         {"fileName": web_file_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/web"},
         {"fileName": bot_file_name, "fileUrl": f"https://{arch}64.ssss.nyc.mn/2go"}
     ]
-
-    # NEZHA 代理
     if NEZHA_SERVER and NEZHA_KEY:
         agent = "agent" if NEZHA_PORT else "v1"
         agent_name = "npm" if NEZHA_PORT else "php"
@@ -182,28 +179,18 @@ def start_proxy_service_once(_lock=lockFile):
 
     for f in files:
         path = os.path.join(FILE_PATH, f['fileName'])
-        try:
-            r = requests.get(f['fileUrl'], stream=True, timeout=15)
-            r.raise_for_status()
-            with open(path, 'wb') as wf:
-                for chunk in r.iter_content(8192):
-                    wf.write(chunk)
-            os.chmod(path, 0o775)
-            logging.info(f"Downloaded {f['fileName']}")
-        except Exception as e:
-            logging.error(f"Download failed {f['fileName']}: {e}")
-            raise
+        r = requests.get(f['fileUrl'], stream=True, timeout=15)
+        r.raise_for_status()
+        with open(path, 'wb') as wf:
+            for c in r.iter_content(8192):
+                wf.write(c)
+        os.chmod(path, 0o775)
 
-    # === 3. 启动 xray ===
-    try:
-        subprocess.Popen([webPath, '-c', configPath], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        logging.info("xray started")
-    except Exception as e:
-        logging.error(f"xray start failed: {e}")
-        raise
+    # 3. 启动 xray
+    subprocess.Popen([webPath, '-c', configPath], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(5)
 
-    # === 4. 启动 cloudflared ===
+    # 4. 启动 cloudflared
     cfd_cmd = [botPath]
     if re.match(r'^[A-Z0-9a-z=]{120,250}$', ARGO_AUTH):
         cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", "--protocol", "http2", "run", "--token", ARGO_AUTH]
@@ -231,32 +218,27 @@ ingress:
         cfd_cmd += ["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", "--protocol", "http2",
                     "--logfile", bootLogPath, "--loglevel", "info", "--url", f"http://localhost:{ARGO_PORT}"]
 
-    try:
-        subprocess.Popen(cfd_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        logging.info("cloudflared started")
-    except Exception as e:
-        logging.error(f"cloudflared start failed: {e}")
-        raise
+    subprocess.Popen(cfd_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3)
 
-    # === 5. 提取域名 ===
+    # 5. 提取域名
     domain = ARGO_DOMAIN or _extract_argo_domain_from_log()
 
-    # === 6. 生成订阅（缓存）===
+    # 6. 生成订阅
     get_global_subscription(domain)
 
-    # === 7. 创建锁文件 ===
+    # 7. 创建 lockFile（永久保留）
     with open(lockFile, 'w') as f:
         f.write(str(int(time.time())))
 
-    # === 8. 访问任务 ===
+    # 8. 访问任务
     if AUTO_ACCESS and PROJECT_URL:
         try:
             requests.post('https://oooo.serv00.net/add-url', json={"url": PROJECT_URL}, timeout=5)
         except:
             pass
 
-    logging.info("GLOBAL SERVICE STARTED SUCCESSFULLY (lock created)")
+    logging.info("GLOBAL SERVICE INITIALIZED (lockFile created - PERMANENT)")
     return domain
 
 
@@ -274,22 +256,20 @@ def _extract_argo_domain_from_log():
     return "unknown.trycloudflare.com"
 
 
-# ====================== 自动清理（90秒后）======================
+# ====================== 自动清理（90秒后，**不删 lockFile**）======================
 def schedule_cleanup():
     def _cleanup():
         time.sleep(90)
-        files_to_delete = [bootLogPath, configPath, subPath, lockFile]
-        for path in [globals().get('webPath'), globals().get('botPath'), npmPath, phpPath]:
-            if path and os.path.exists(path):
-                files_to_delete.append(path)
+        files = [bootLogPath, configPath, subPath]  # 不删 lockFile
+        for path in [p for p in [globals().get('webPath'), globals().get('botPath'), npmPath, phpPath] if p and os.path.exists(p)]:
+            files.append(path)
         for ext in ['tunnel.json', 'tunnel.yml']:
             f = os.path.join(FILE_PATH, ext)
             if os.path.exists(f):
-                files_to_delete.append(f)
-        if files_to_delete:
-            cmd = f"rm -f {' '.join(files_to_delete)}"
-            subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        logging.info("Temporary files cleaned (including sub.txt and lock)")
+                files.append(f)
+        if files:
+            subprocess.run(f"rm -f {' '.join(files)}", shell=True, stdout=subprocess.DEVNULL)
+        logging.info("Temporary files cleaned (lockFile kept)")
     threading.Thread(target=_cleanup, daemon=True).start()
 
 
@@ -300,30 +280,40 @@ def main():
     st.markdown("---")
 
     # 初始化 session_state
-    for key in ["passwd_verified", "service_started", "argo_domain", "cleanup_scheduled"]:
-        if key not in st.session_state:
-            st.session_state[key] = None if key == "argo_domain" else False
+    if "passwd_verified" not in st.session_state:
+        st.session_state.passwd_verified = False
+    if "argo_domain" not in st.session_state:
+        st.session_state.argo_domain = None
 
-    # === 1. 全局服务启动（所有用户共享，只一次）===
-    if not st.session_state.service_started:
-        with st.spinner("Starting global service (shared by all users)..."):
+    # === 1. 判断是否已初始化：只看 lockFile 是否存在 ===
+    if not os.path.exists(lockFile):
+        with st.spinner("Initializing global service (first user triggers)..."):
             try:
                 domain = start_proxy_service_once()
-                st.session_state.service_started = True
                 st.session_state.argo_domain = domain
-                if not st.session_state.cleanup_scheduled:
-                    schedule_cleanup()
-                    st.session_state.cleanup_scheduled = True
-                st.success("Service ready!")
-                st.info("Enter password to view")
+                schedule_cleanup()  # 清理临时文件（不删 lockFile）
+                st.success("Service initialized!")
+                st.info("Refresh and enter password")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
                 st.error(f"Init failed: {e}")
-                logging.error(f"Service start error: {e}", exc_info=True)
+                logging.error(f"Service error: {e}", exc_info=True)
         return
+    else:
+        # lockFile 存在 → 服务已初始化
+        if st.session_state.argo_domain is None:
+            domain = ARGO_DOMAIN
+            if not domain and os.path.exists(bootLogPath):
+                try:
+                    with open(bootLogPath, 'r') as f:
+                        if m := re.search(r'https?://([^ ]*trycloudflare\.com)', f.read()):
+                            domain = m.group(1)
+                except:
+                    pass
+            st.session_state.argo_domain = domain or "unknown.trycloudflare.com"
 
-    # === 2. 密码登录 ===
+    # === 2. 密码验证 ===
     if not st.session_state.passwd_verified:
         pwd = st.text_input("Enter password", type="password", placeholder="Default: admin123")
         if pwd:
@@ -337,27 +327,17 @@ def main():
             st.info("Please enter the correct password")
         return
 
-    # === 3. 显示订阅（从内存缓存）===
-    if not st.session_state.argo_domain:
-        st.warning("Domain loading...")
-        st.rerun()
-
+    # === 3. 显示订阅（内存缓存）===
     b64_content = get_global_subscription(st.session_state.argo_domain)
 
-    st.subheader("Subscription Content (Base64)")
-    st.text_area("Click to select all to Copy", b64_content, height=150)
-    st.download_button(
-        label="Download sub.txt (Recommended)",
-        data=b64_content,
-        file_name="sub.txt",
-        mime="text/plain"
-    )
-    st.success("**Copied or downloaded! Import in v2rayN to From clipboard/file**")
+    st.subheader("Subscription (Base64)")
+    st.text_area("Click to select all", b64_content, height=150)
+    st.download_button("Download sub.txt", b64_content, "sub.txt", "text/plain")
+    st.success("Done!")
 
-    # === 管理员：强制刷新缓存 ===
-    if st.button("Force Refresh Cache (Admin Only)"):
+    if st.button("Force Refresh Cache (Admin)"):
         get_global_subscription.clear()
-        st.success("Cache cleared, regenerating...")
+        st.success("Refreshing...")
         st.rerun()
 
 
